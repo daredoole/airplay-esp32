@@ -201,6 +201,19 @@ menu "Airplay ESP Configuration"
         default 48000 if OUTPUT_SAMPLE_RATE_48000
         default 44100
 
+    config AUDIO_CALIBRATION_DSP
+        bool "10-band/channel calibration DSP and MCP API"
+        default y if IDF_TARGET_ESP32S3 && AUDIO_OUTPUT_I2S && !DAC_CONTROLS_VOLUME
+        depends on AUDIO_OUTPUT_I2S
+        depends on !DAC_TAS57XX && !DAC_TAS58XX
+        help
+            Enables the float PCM5102A/generic-I2S signal path: ten true
+            parametric filters per channel, automatic cascade headroom,
+            channel gain/delay/polarity, stereo-linked look-ahead limiting,
+            profile rollback, metrics, REW import, and the /api/dsp endpoints
+            used by Audio Calibration MCP. The saved profile defaults to
+            bypass so an upgrade does not silently change the sound.
+
     config RESAMPLER_TAPS
         int "Resampler filter taps (quality)" if OUTPUT_SAMPLE_RATE_48000
         range 4 64

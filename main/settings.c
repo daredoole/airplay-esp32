@@ -27,6 +27,8 @@ static const char *TAG = "settings";
 #define NVS_KEY_BIAMP_SWAP     "ba_swap"
 #define NVS_KEY_BIAMP_EQ       "ba_eq"
 #define NVS_KEY_DUAL_MODE      "dual_mode"
+#define NVS_KEY_DSP_PROFILE    "dsp_profile"
+#define NVS_KEY_DSP_BACKUP     "dsp_backup"
 
 #define MAX_WIFI_SSID_LEN     32
 #define MAX_WIFI_PASSWORD_LEN 64
@@ -837,4 +839,56 @@ settings_set_biamp_eq(const float gains_db[2][2][SETTINGS_WAY_BANDS]) {
     ESP_LOGE(TAG, "Failed to save bi-amp EQ: %s", esp_err_to_name(err));
   }
   return err;
+}
+
+/* ================================================================== */
+/*  Versioned calibration DSP profiles                                */
+/* ================================================================== */
+
+static esp_err_t settings_get_blob(const char *key, void *data, size_t *len) {
+  if (!key || !data || !len) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+  if (err != ESP_OK) {
+    return ESP_ERR_NOT_FOUND;
+  }
+  err = nvs_get_blob(nvs, key, data, len);
+  nvs_close(nvs);
+  return err;
+}
+
+static esp_err_t settings_set_blob(const char *key, const void *data,
+                                   size_t len) {
+  if (!key || !data || len == 0) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+  if (err != ESP_OK) {
+    return err;
+  }
+  err = nvs_set_blob(nvs, key, data, len);
+  if (err == ESP_OK) {
+    err = nvs_commit(nvs);
+  }
+  nvs_close(nvs);
+  return err;
+}
+
+esp_err_t settings_get_dsp_profile(void *data, size_t *len) {
+  return settings_get_blob(NVS_KEY_DSP_PROFILE, data, len);
+}
+
+esp_err_t settings_set_dsp_profile(const void *data, size_t len) {
+  return settings_set_blob(NVS_KEY_DSP_PROFILE, data, len);
+}
+
+esp_err_t settings_get_dsp_backup(void *data, size_t *len) {
+  return settings_get_blob(NVS_KEY_DSP_BACKUP, data, len);
+}
+
+esp_err_t settings_set_dsp_backup(const void *data, size_t len) {
+  return settings_set_blob(NVS_KEY_DSP_BACKUP, data, len);
 }

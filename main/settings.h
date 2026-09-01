@@ -260,3 +260,14 @@ esp_err_t settings_get_biamp_eq(float gains_db[2][2][SETTINGS_WAY_BANDS]);
  * Save the bi-amp EQ gains.
  */
 esp_err_t settings_set_biamp_eq(const float gains_db[2][2][SETTINGS_WAY_BANDS]);
+
+// ---- Calibration DSP profile blobs ----
+
+/** Read/write the active versioned DSP profile without coupling settings to
+ * the profile's C type. The caller validates version and exact blob size. */
+esp_err_t settings_get_dsp_profile(void *data, size_t *len);
+esp_err_t settings_set_dsp_profile(const void *data, size_t len);
+
+/** One-generation backup used by the API's atomic rollback operation. */
+esp_err_t settings_get_dsp_backup(void *data, size_t *len);
+esp_err_t settings_set_dsp_backup(const void *data, size_t len);

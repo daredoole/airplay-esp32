@@ -2,6 +2,9 @@
 #include "rtsp_server.h"
 
 #include "audio_resample.h"
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+#include "calibration_dsp.h"
+#endif
 #include "dac.h"
 #include "led.h"
 #include "settings.h"
@@ -141,6 +144,7 @@ static void push_channel_mode_to_dsp(audio_channel_mode_t mode) {
 #endif
 }
 
+#ifndef CONFIG_AUDIO_CALIBRATION_DSP
 static void apply_volume(int16_t *buf, size_t n) {
 #ifndef CONFIG_DAC_CONTROLS_VOLUME
   // Ramp toward the target gain instead of applying volume changes
@@ -169,6 +173,7 @@ static void apply_volume(int16_t *buf, size_t n) {
   }
 #endif
 }
+#endif
 
 // Apply the selected channel mode to an interleaved stereo buffer (L,R,...).
 // LEFT/RIGHT route the chosen source channel to BOTH outputs so the selected
@@ -221,6 +226,9 @@ static void playback_task(void *arg) {
     if (flush_requested) {
       flush_requested = false;
       audio_resample_reset();
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      calibration_dsp_reset();
+#endif
       i2s_channel_disable(tx_handle);
       output_cursor_reset();
       i2s_channel_enable(tx_handle);
@@ -234,8 +242,12 @@ static void playback_task(void *arg) {
                                               MAX_RESAMPLE_FRAMES);
         play_buf = resample_buf;
       }
-      apply_volume(play_buf, play_samples * 2);
       apply_channel_mode(play_buf, play_samples);
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      calibration_dsp_process(play_buf, play_samples, airplay_get_volume_q15());
+#else
+      apply_volume(play_buf, play_samples * 2);
+#endif
       led_audio_feed(play_buf, play_samples);
       if (i2s_channel_write(tx_handle, play_buf,
                             play_samples * 2 * sizeof(int16_t), &written,
@@ -428,10 +440,14 @@ uint32_t audio_output_get_hardware_latency_us(void) {
   //   (DESC_NUM - 0.5) x FRAME_NUM == (2*DESC_NUM - 1) x FRAME_NUM / 2
   // The residual +/-2.9 ms swing is real jitter that the drift servo in
   // audio_timing.c absorbs; only the constant bias is removed here.
-  return (uint32_t)((((uint64_t)(2 * I2S_DMA_DESC_NUM - 1) * I2S_DMA_FRAME_NUM *
-                      1000000ULL) /
-                     2) /
-                    OUTPUT_RATE);
+  uint32_t latency = (uint32_t)((((uint64_t)(2 * I2S_DMA_DESC_NUM - 1) *
+                                  I2S_DMA_FRAME_NUM * 1000000ULL) /
+                                 2) /
+                                OUTPUT_RATE);
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  latency += calibration_dsp_get_latency_us();
+#endif
+  return latency;
 }
 
 bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us) {
@@ -446,6 +462,9 @@ bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us) {
   }
   if (pipeline_us) {
     *pipeline_us = (uint32_t)(((uint64_t)queued * 1000000ULL) / OUTPUT_RATE);
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+    *pipeline_us += calibration_dsp_get_latency_us();
+#endif
   }
   return true;
 }

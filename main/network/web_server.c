@@ -20,6 +20,9 @@
 #include "log_stream.h"
 #include "rtsp_server.h"
 #include "audio_output.h"
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+#include "dsp_api.h"
+#endif
 #include "esp_app_desc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -107,6 +110,12 @@ static esp_err_t logs_page_handler(httpd_req_t *req) {
 static esp_err_t speedtest_page_handler(httpd_req_t *req) {
   return serve_spiffs_file(req, "/spiffs/www/speedtest.html", "text/html");
 }
+
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+static esp_err_t dsp_page_handler(httpd_req_t *req) {
+  return serve_spiffs_file(req, "/spiffs/www/dsp.html", "text/html");
+}
+#endif
 
 // Tiny endpoint used by JS for RTT timing. Returns minimal body.
 static esp_err_t speedtest_ping_handler(httpd_req_t *req) {
@@ -1308,6 +1317,9 @@ esp_err_t web_server_start(uint16_t port) {
   config.lru_purge_enable = true; // Reclaim stale sockets when all are in use
   config.max_uri_handlers =
       30; // Room for captive portal + EQ + speedtest + brightness + channel
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  config.max_uri_handlers += 8; // DSP page, profiles, REW, rollback, telemetry
+#endif
 #ifdef DAC_HAS_SUB_OFFSET
   config.max_uri_handlers += 2; // sub level get/post
 #endif
@@ -1341,6 +1353,12 @@ esp_err_t web_server_start(uint16_t port) {
                                     .method = HTTP_GET,
                                     .handler = speedtest_page_handler};
   httpd_register_uri_handler(s_server, &speedtest_page_uri);
+
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  httpd_uri_t dsp_page_uri = {
+      .uri = "/dsp", .method = HTTP_GET, .handler = dsp_page_handler};
+  httpd_register_uri_handler(s_server, &dsp_page_uri);
+#endif
 
   httpd_uri_t speedtest_ping_uri = {.uri = "/api/speedtest/ping",
                                     .method = HTTP_GET,
@@ -1495,6 +1513,15 @@ esp_err_t web_server_start(uint16_t port) {
   httpd_uri_t eq_post_uri = {
       .uri = "/api/eq", .method = HTTP_POST, .handler = eq_post_handler};
   httpd_register_uri_handler(s_server, &eq_post_uri);
+#endif
+
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  err = dsp_api_register(s_server);
+  if (err != ESP_OK) {
+    httpd_stop(s_server);
+    s_server = NULL;
+    return err;
+  }
 #endif
 
   log_stream_register(s_server);

@@ -1,13 +1,13 @@
 # Built with Zensical (https://zensical.org/), the successor to Material for
 # MkDocs by the same team. Zensical reads this mkdocs.yml format natively, so
 # reverting to mkdocs + mkdocs-material needs no changes to this file.
-site_name: ESP32 AirPlay 2 Receiver
+site_name: AirPlay ESP32 — Calibrated
 site_description: >-
-  Turn a cheap ESP32 board into a wireless AirPlay 2 speaker.
-  ALAC and AAC decoding, Bluetooth A2DP, Ethernet, displays and OTA updates.
-site_url: https://rbouteiller.github.io/airplay-esp32/
-repo_url: https://github.com/rbouteiller/airplay-esp32
-repo_name: rbouteiller/airplay-esp32
+  AirPlay 2 for ESP32-S3 and PCM5102A with REW and Audio Calibration MCP
+  support, per-channel PEQ, automatic headroom and verified rollback.
+site_url: https://daredoole.github.io/airplay-esp32/
+repo_url: https://github.com/daredoole/airplay-esp32
+repo_name: daredoole/airplay-esp32
 edit_uri: edit/main/docs/
 copyright: Non-commercial use only. Not affiliated with Apple Inc.
 
@@ -91,7 +91,7 @@ extra_javascript:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/rbouteiller/airplay-esp32
+      link: https://github.com/daredoole/airplay-esp32
 
 # Broken internal links fail the build so docs cannot silently rot.
 strict: true
@@ -118,6 +118,7 @@ nav:
       - ST7789 TFT display: features/tft-display.md
       - Hardware buttons: features/buttons.md
       - AirPlay tuning: features/airplay-tuning.md
+      - Calibration DSP + MCP: calibration-dsp.md
   - Reference:
       - Build environments: reference/build-environments.md
       - SPIFFS filesystem: reference/spiffs.md

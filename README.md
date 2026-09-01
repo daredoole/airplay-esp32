@@ -1,99 +1,148 @@
 <div align="center">
 
-<img src="docs/assets/logo_airplay_esp32.png" alt="AirPlay ESP32" width="400">
+<img src="docs/assets/logo_airplay_esp32.png" alt="AirPlay ESP32" width="390">
 
-# ESP32 AirPlay 2 Receiver
+# AirPlay ESP32 — Calibrated
 
-**Stream music from your Apple devices — or from any phone over Bluetooth — to any speaker for about $10**
+**A tiny AirPlay 2 streamer for ESP32-S3 + PCM5102A, with room correction that REW and an Audio Calibration MCP can actually control.**
 
-[![GitHub stars](https://img.shields.io/github/stars/rbouteiller/airplay-esp32?style=flat-square)](https://github.com/rbouteiller/airplay-esp32/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/rbouteiller/airplay-esp32?style=flat-square)](https://github.com/rbouteiller/airplay-esp32/network)
+[![Build](https://img.shields.io/badge/target-ESP32--S3-184ea1?style=flat-square)](platformio.ini)
+[![DSP](https://img.shields.io/badge/DSP-10%20bands%20%2F%20channel-f36b2b?style=flat-square)](docs/calibration-dsp.md)
+[![Sample rate](https://img.shields.io/badge/AirPlay-native%2044.1%20kHz-17222c?style=flat-square)](main/Kconfig.projbuild)
 [![License](https://img.shields.io/badge/license-Non--Commercial-blue?style=flat-square)](LICENSE)
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.5+-red?style=flat-square)](https://docs.espressif.com/projects/esp-idf/)
-[![Platform](https://img.shields.io/badge/platform-ESP32%20%7C%20S2%20%7C%20S3%20%7C%20C5-green?style=flat-square)](https://www.espressif.com/en/products/socs)
 
-### [Documentation](https://rbouteiller.github.io/airplay-esp32/) · [Install from your browser](https://rbouteiller.github.io/airplay-esp32/getting-started/flashing/) · [Troubleshooting](https://rbouteiller.github.io/airplay-esp32/troubleshooting/)
+[Calibration DSP](#the-calibration-path) · [Build it](#build-it) · [REW + MCP](#rew-and-audio-calibration-mcp) · [Upstream](https://github.com/rbouteiller/airplay-esp32)
 
 </div>
 
----
+This is my audiophile-focused fork of [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32). The upstream project already does the hard, unglamorous work: AirPlay 2, ALAC/AAC decoding, multi-room timing, Wi-Fi setup, OTA updates and a solid ESP-IDF audio pipeline.
 
-## What is this?
+This fork keeps that foundation and adds the part I wanted for a cheap ESP32-S3 + PCM5102A box: a real, measurable calibration target. No magic audiophile dust. Measure the room, make conservative corrections, apply them to the streamer, then measure again and keep the profile only if it is actually better.
 
-This turns a cheap ESP32 board into a wireless AirPlay 2 speaker. Plug it into any
-amplifier or powered speakers and it shows up on your iPhone, iPad or Mac just like a
-HomePod or an AirPlay TV.
+> **Project status:** the DSP, REST API, REW import, rollback, telemetry and web controls are implemented, and the `esp32s3` firmware build passes. Listening tests, long-run thermal/load tests and multi-room timing checks on physical hardware are still required before calling this production-ready.
 
-Works with **ESP32**, **ESP32-S2**, **ESP32-S3** and **ESP32-C5** chips, including the
-[SqueezeAMP](https://github.com/philippe44/SqueezeAMP) (ESP32 + TAS5756) and
-[Esparagus Audio Brick](https://sonocotta.com/espragus-audio-brick/) (ESP32 + TAS5825M)
-boards, which have amplifiers built in.
+![Calibration DSP control page](docs/assets/dsp-control.png)
 
-ESP32-based boards also support **Bluetooth A2DP**, so anything that can pair with a
-Bluetooth speaker can play to them when AirPlay is idle. The Esparagus Audio Brick
-additionally supports **wired Ethernet** through an optional W5500 module.
+## Why this fork exists
 
-**No cloud. No app. Just tap and play.**
+The PCM5102A is a good, simple I²S DAC, but it has no onboard DSP. A fixed bass/mid/treble control is not enough for room correction, and EQ that clips to 16-bit before its limiter is worse than it looks on a graph.
 
-## Quick start
+This fork uses a different signal path:
 
-The fastest route is the browser installer — no toolchain, no command line:
-
-**[→ Install from your browser](https://rbouteiller.github.io/airplay-esp32/getting-started/flashing/)**
-
-Building from parts instead? You need an ESP32-S3 dev board, a PCM5102A DAC and a female
-pin header, roughly $10 total, and no soldering. See the
-[getting started guide](https://rbouteiller.github.io/airplay-esp32/getting-started/).
-
-Building from source:
-
-```bash
-git clone --recursive https://github.com/rbouteiller/airplay-esp32
-cd airplay-esp32
-pio run -e esp32s3 -t upload
-pio run -e esp32s3 -t uploadfs   # required — writes the web UI to SPIFFS
+```text
+AirPlay decode → float preamp → 10-band PEQ L/R → gain / delay / polarity
+               → AirPlay volume → stereo look-ahead limiter → int16 I²S → PCM5102A
 ```
 
-## Features
+The important bit is where quantization happens: the filters, channel alignment, volume and limiter all run in float. The signal is clamped and converted back to PCM only once, at the I²S boundary.
 
-- **AirPlay 2** — appears natively in Control Center and every AirPlay-capable app
-- **ALAC and AAC decoding** — live streaming (Siri, calls) and music playback
-- **Multi-room** — PTP-based timing for synchronised playback
-- **Bluetooth A2DP** — receive audio from phones and tablets (ESP32 boards only)
-- **W5500 Ethernet** — wired networking with automatic WiFi failover
-- **Web configuration** and **OTA updates** — USB is only needed for the first flash
-- **48 kHz output** — optional 44.1 → 48 kHz conversion via a sinc resampler
-- **Displays** — optional OLED or 320×170 colour TFT with track metadata
-- **Hardware buttons** — optional play/pause, volume and track skip
+## The calibration path
 
-Audio only, one speaker per board, and a decent WiFi signal is required.
+- **10 true filters per channel** — PK, low shelf, high shelf, high-pass and low-pass, each with frequency, gain and Q.
+- **Independent left/right correction** — gain, delay and polarity live beside each channel's filters.
+- **Automatic headroom** — firmware evaluates the combined cascade at 512 log-spaced frequencies. Overlapping boosts count; it does not just subtract the largest slider value.
+- **Stereo-linked look-ahead limiter** — 0.5–5 ms look-ahead, configurable ceiling and release, with one gain envelope for both channels.
+- **AirPlay sync awareness** — active limiter look-ahead is added to the reported output latency instead of silently shifting multi-room playback.
+- **Apply/verify identity** — every accepted profile gets a stable hash so an MCP can prove the filter set under test is the one it sent.
+- **Useful telemetry** — limiter reduction, clipped-sample count, DSP load, output underruns, processed frames and fixed DSP latency.
+- **One-step rollback** — the previous profile is saved in NVS before a new one becomes active.
 
-## Documentation
+The saved profile boots bypassed until you deliberately apply one. A firmware upgrade should not quietly change the sound.
 
-| | |
+## Hardware
+
+The basic build is deliberately boring:
+
+| Part | Job |
 | --- | --- |
-| [Getting started](https://rbouteiller.github.io/airplay-esp32/getting-started/) | Shopping list, assembly, flashing, first boot |
-| [Supported boards](https://rbouteiller.github.io/airplay-esp32/boards/) | SqueezeAMP, Esparagus Audio Brick, XIAO ESP32-C5, custom boards |
-| [Features](https://rbouteiller.github.io/airplay-esp32/features/bluetooth/) | Bluetooth, Ethernet, displays, buttons, AirPlay tuning |
-| [Reference](https://rbouteiller.github.io/airplay-esp32/reference/build-environments/) | Build environments, SPIFFS, OTA, architecture |
-| [Troubleshooting](https://rbouteiller.github.io/airplay-esp32/troubleshooting/) | No sound, no setup WiFi, dropouts, build errors |
+| ESP32-S3 DevKit | AirPlay receiver and DSP |
+| PCM5102A board | I²S DAC |
+| Amplifier or powered speakers | The part that makes noise |
+| Stable USB supply | Do not debug audio on a terrible power supply |
 
-## Contributing
+Default ESP32-S3 pin mapping:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[contributing guide](https://rbouteiller.github.io/airplay-esp32/contributing/).
-Documentation lives in [`docs/`](docs/) and is built with [Zensical](https://zensical.org/)
-— every page on the site has an edit link that takes you straight to the GitHub editor.
+| PCM5102A | ESP32-S3 |
+| --- | ---: |
+| SCK / MCLK | GPIO 8 |
+| BCK | GPIO 11 |
+| LCK / WS | GPIO 13 |
+| DIN | GPIO 12 |
+| GND | GND |
 
-## Acknowledgements
+<p align="center">
+  <img src="docs/assets/ESP_PCM_front.png" alt="ESP32 and PCM5102A front" width="31%">
+  <img src="docs/assets/ESP32_PCM_side.png" alt="ESP32 and PCM5102A side" width="31%">
+  <img src="docs/assets/ESP_PCM_back.png" alt="ESP32 and PCM5102A back" width="31%">
+</p>
 
-- [Shairport Sync](https://github.com/mikebrady/shairport-sync) — the reference AirPlay implementation
-- [openairplay/airplay2-receiver](https://github.com/openairplay/airplay2-receiver) — Python AirPlay 2 implementation
-- [Espressif](https://github.com/espressif) — ESP-IDF framework and codec libraries
+## Build it
 
-## Legal
+You need PlatformIO and a recursive clone because the upstream display components use submodules.
 
-**Non-commercial use only.** Commercial use requires explicit permission — see [LICENSE](LICENSE).
+```bash
+git clone --recursive https://github.com/daredoole/airplay-esp32.git
+cd airplay-esp32
+pio run -e esp32s3 -t upload
+pio run -e esp32s3 -t uploadfs
+```
 
-This is an independent project based on protocol analysis. Not affiliated with Apple Inc.
-Not guaranteed to work with future iOS or macOS versions. Provided as-is without warranty.
+Join the temporary setup network, give the receiver your Wi-Fi credentials, then open its IP address. The **Calibration DSP** button appears when the firmware reports DSP support.
+
+The default output stays at **44.1 kHz**, AirPlay's native rate, so the PCM5102A path does not resample normal AirPlay audio.
+
+## REW and Audio Calibration MCP
+
+There are two ways to load a correction.
+
+For a human, export/copy REW's generic filter text, open `/dsp`, paste it, and select **Apply REW filters**. The importer understands common `PK`, `LS`, `HS`, `HP/HPF` and `LP/LPF` lines and copies up to ten filters to both channels.
+
+For automation, the ESP32 is a native target rather than a file you manually shuttle around:
+
+```text
+REW repeated L/R measurements
+        ↓
+Audio Calibration MCP proposes conservative filters
+        ↓
+GET capabilities → backup → PUT profile → verify profile hash
+        ↓
+REW post-EQ measurement
+        ↓
+keep if better · rollback if worse
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/dsp/capabilities` | Negotiate sample rate, filter count/types, delay and limiter support |
+| `GET /api/dsp/profile` | Read the exact active profile, effective preamp and hash |
+| `PUT /api/dsp/profile` | Validate, back up, apply and persist a versioned profile |
+| `POST /api/dsp/rew` | Import plain REW filter text directly |
+| `POST /api/dsp/bypass` | Runtime A/B comparison without deleting the profile |
+| `POST /api/dsp/rollback` | Restore the last saved profile |
+| `GET /api/dsp/metrics` | Read limiter, clipping, CPU, underrun and latency telemetry |
+
+The complete payload contract and validation limits are in [the calibration DSP reference](docs/calibration-dsp.md). A ready-to-edit payload lives at [examples/dsp-profile.json](examples/dsp-profile.json).
+
+> The HTTP API has no authentication. Keep the receiver on a trusted LAN; do not expose it directly to the internet.
+
+## What stays from upstream
+
+- AirPlay 2 discovery and playback from iPhone, iPad and Mac
+- ALAC and AAC decoding
+- PTP-based multi-room synchronization
+- Captive-portal setup, web configuration and OTA updates
+- Optional Bluetooth A2DP on classic ESP32 targets
+- W5500 Ethernet, displays, hardware buttons and supported amplifier boards
+- TAS57xx/TAS58xx hardware-DSP support for boards that use those chips
+
+The new software calibration path is intentionally limited to standard I²S builds such as ESP32-S3 + PCM5102A. It does not pretend the TAS58xx fixed-frequency gain page is the same thing as a true Fc/Gain/Q PEQ.
+
+## Sensible next steps
+
+The next features should earn their complexity. Hardware validation and measurement repeatability come first. After that, the useful additions are named profile slots, click-free profile crossfades, measurement-mode volume locking, Home Assistant entities and a 24/32-bit I²S output path. Giant FIR correction can wait; ten careful IIR filters are the better trade for this hardware.
+
+## Credits and license
+
+This fork exists because [rbouteiller/airplay-esp32](https://github.com/rbouteiller/airplay-esp32) exists. It also builds on work from [Shairport Sync](https://github.com/mikebrady/shairport-sync), [openairplay/airplay2-receiver](https://github.com/openairplay/airplay2-receiver) and Espressif's ESP-IDF ecosystem.
+
+**Non-commercial use only.** See [LICENSE](LICENSE). This is an independent project, is not affiliated with Apple, and comes with no warranty.

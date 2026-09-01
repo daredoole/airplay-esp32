@@ -20,6 +20,11 @@ CONFIG_I2S_WS_IO=13
 CONFIG_I2S_DO_IO=12
 CONFIG_I2S_GND_IO=14
 
+# Native calibration target for generic I2S DACs such as PCM5102A.
+# It boots bypassed until a profile is applied from the web API, REW import,
+# or Audio Calibration MCP.
+CONFIG_AUDIO_CALIBRATION_DSP=y
+
 # ST7789 TFT display support is not enabled by default.
 # The display is optional hardware — enabling it configures specific SPI
 # GPIO pins which may conflict with other peripherals on your board.

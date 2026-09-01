@@ -85,6 +85,8 @@ input:focus{outline:none;border-color:#e94560}
 <div id='dual-msg'></div></div>
 <div id='eq-link' style='display:none;margin-top:18px'>
 <a href='/eq' class='btn btn-secondary'>EQ Settings</a></div>
+<div id='dsp-link' style='display:none;margin-top:18px'>
+<a href='/dsp' class='btn btn-secondary'>Calibration DSP</a></div>
 </div>
 <div class='card'><h2>Firmware Update</h2>
 <div class='file-row'><input type='file' id='fw-file' accept='.bin' style='display:none'>
@@ -219,6 +221,7 @@ async function startOTA(){
 async function restart(){
   if(!confirm('Restart the device?'))return;
   try{await fetch('/api/system/restart',{method:'POST'});msg('','Restarting...','info');}catch(e){}}
+async function loadDspLink(){try{var r=await fetch('/api/dsp/capabilities');if(r.ok){document.getElementById('dsp-link').style.display='';}}catch(e){}}
 async function loadInfo(){
   try{var r=await fetch('/api/system/info');var d=await r.json();
     if(d.success){var i=d.info;var b=document.getElementById('status-bar');
@@ -249,5 +252,5 @@ window.onload=function(){
   document.getElementById('fw-file').onchange=function(e){var f=e.target.files[0];
     document.getElementById('fw-name').textContent=f?f.name:'No file selected';
     document.getElementById('ota-btn').disabled=!f;};
-  loadInfo();loadBrightness();loadChannel();setInterval(loadInfo,30000);};
+  loadInfo();loadBrightness();loadChannel();loadDspLink();setInterval(loadInfo,30000);};
 </script></body></html>

@@ -1,5 +1,8 @@
 #include "audio_output.h"
 #include "audio_receiver.h"
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+#include "calibration_dsp.h"
+#endif
 #include "buttons.h"
 #include "spiram_task.h"
 #include "display.h"
@@ -218,6 +221,9 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
   ESP_ERROR_CHECK(settings_init());
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  ESP_ERROR_CHECK(calibration_dsp_init(CONFIG_OUTPUT_SAMPLE_RATE_HZ));
+#endif
 #ifdef CONFIG_DAC_TAS57XX
   // Load persisted sub level offset (pre-init safe; applied on first volume).
   float sub_off;

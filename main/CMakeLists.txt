@@ -45,6 +45,13 @@ set( SRC_FILES
     "dacp_client.c"
 )
 
+if(CONFIG_AUDIO_CALIBRATION_DSP)
+    list(APPEND SRC_FILES
+        "audio/calibration_dsp.c"
+        "network/dsp_api.c"
+    )
+endif()
+
 # Select audio output implementation at compile time. audio_output_common.c
 # carries weak defaults for the optional entry points, so a backend only has
 # to implement what it actually supports.
