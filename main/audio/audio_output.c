@@ -662,6 +662,10 @@ void audio_output_flush(void) {
   flush_requested = true;
 }
 
+bool audio_output_fade_supported(void) {
+  return true;
+}
+
 uint32_t audio_output_get_fade_ms(void) {
   return output_fade_ms;
 }

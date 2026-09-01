@@ -52,6 +52,7 @@ void audio_output_start(void);
 void audio_output_flush(void);
 
 /** Track/stream transition fade duration (5-50 ms), persisted in NVS. */
+bool audio_output_fade_supported(void);
 uint32_t audio_output_get_fade_ms(void);
 esp_err_t audio_output_set_fade_ms(uint32_t fade_ms);
 

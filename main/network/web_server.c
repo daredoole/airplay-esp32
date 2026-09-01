@@ -505,6 +505,7 @@ static esp_err_t channel_mode_post_handler(httpd_req_t *req) {
 static esp_err_t output_fade_get_handler(httpd_req_t *req) {
   cJSON *json = cJSON_CreateObject();
   cJSON_AddBoolToObject(json, "success", true);
+  cJSON_AddBoolToObject(json, "supported", audio_output_fade_supported());
   cJSON_AddNumberToObject(json, "fade_ms", audio_output_get_fade_ms());
   cJSON_AddNumberToObject(json, "min_ms", 5);
   cJSON_AddNumberToObject(json, "max_ms", 50);
