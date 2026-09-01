@@ -10,6 +10,7 @@ Every PlatformIO environment defined in `platformio.ini`. The default is `esp32s
 | `esp32s3-jtag` | ESP32-S3 | 16 MB | Extends `esp32s3`, uploads over built-in USB JTAG |
 | `waveshare-esp32s3` | ESP32-S3 | 16 MB | Waveshare ESP32-S3 pin arrangement |
 | `esp32c5-xiao` | ESP32-C5 | 8 MB | Seeed XIAO, needs the community pioarduino platform |
+| `esp32dev-4m` | ESP32 | 4 MB | Generic DevKit/WROOM without PSRAM; PCM5102A on BCK 33, WS 25, DIN 32 |
 | `esp32wrover-dev` | ESP32 | 4 MB | Freenove WROVER, includes Bluetooth |
 
 ## Amplifier boards

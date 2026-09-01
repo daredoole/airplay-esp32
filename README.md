@@ -60,7 +60,7 @@ The basic build is deliberately boring:
 
 | Part | Job |
 | --- | --- |
-| ESP32-S3 DevKit | AirPlay receiver and DSP |
+| ESP32-S3 or classic ESP32 DevKit | AirPlay receiver and DSP |
 | PCM5102A board | I²S DAC |
 | Amplifier or powered speakers | The part that makes noise |
 | Stable USB supply | Do not debug audio on a terrible power supply |
@@ -80,6 +80,22 @@ This is the exact wiring tested on the YD-ESP32-S3 N16R8 board used for this for
 Do not use GPIO14 as ground, and do not use the board's `5VIN` pin as a power
 output—it is an input on this board. The PCM5102A generates its own master clock,
 so grounding `SCK` is intentional.
+
+For a classic 4 MB ESP32 DevKit/WROOM board without PSRAM, build the
+`esp32dev-4m` environment and move the three I²S signals:
+
+| PCM5102A | Classic ESP32 |
+| --- | ---: |
+| SCK / MCLK | GND |
+| BCK | GPIO 33 |
+| LCK / WS | GPIO 25 |
+| DIN | GPIO 32 |
+| VIN | 3V3 |
+| GND | Any pin marked GND |
+
+Flash both images: `pio run -e esp32dev-4m -t upload` followed by
+`pio run -e esp32dev-4m -t uploadfs`. The second command installs the captive
+portal and WebUI; without it the portal reports `File not found`.
 
 ```mermaid
 flowchart LR
