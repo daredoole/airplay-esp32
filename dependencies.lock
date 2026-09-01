@@ -63,6 +63,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 1.11.1
+  espressif/mqtt:
+    component_hash: fb18bc3b65aa8c94693a9811ffc322cca8a65d92d5ec84983d3e385080e3969c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.0
   espressif/tinyusb:
     component_hash: a40b7f67df6ac254a4afd96c6401cc56f2059ae747d6d7e66b568bca53ad0edc
     dependencies:
@@ -120,8 +130,9 @@ direct_dependencies:
 - espressif/led_strip
 - espressif/libsodium
 - espressif/mdns
+- espressif/mqtt
 - espressif/usb_device_uac
 - lvgl/lvgl
-manifest_hash: 5e907f6a7449f560ee0d6d407fb03dcb729d61b80a1c9ce03ed2d34a9545e5d2
+manifest_hash: 41a31c943a2d9e094654829ddd81427874d1932862eadf356e2b009b84b9cd5a
 target: esp32s3
 version: 3.0.0
