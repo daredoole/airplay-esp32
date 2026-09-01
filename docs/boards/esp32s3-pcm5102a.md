@@ -1,8 +1,8 @@
 # ESP32-S3 + PCM5102A
 
 The cheapest and most common build: a generic ESP32-S3 dev board with an external
-PCM5102A I2S DAC plugged straight onto its pins. This is the default build environment
-(`esp32s3`) and the configuration the project is developed against.
+PCM5102A I2S DAC plugged straight onto its pins. This fork's default build environment
+(`esp32s3`) targets the connected N16R8 module: 16 MB flash and 8 MB octal PSRAM.
 
 For the parts list and step-by-step assembly, see
 [shopping list](../getting-started/shopping-list.md) and
@@ -43,6 +43,16 @@ Pins can be changed under **Board Configuration → Pin Configuration** in `menu
     ```
 
     The second command is required — it writes the web UI to SPIFFS.
+
+    Use `esp32s3-secure-ota` after generating a private signing key when you
+    want signed web updates and automatic boot rollback.
+
+## Calibrated output path
+
+The S3 build keeps the DSP path in float through the limiter, applies TPDF
+dither, and sends effective 24-bit samples in 32-bit I2S slots. Open `/dsp`
+for profiles, REW import, measurement mode, diagnostics and MQTT discovery.
+Profile changes fade over 50 ms to avoid clicks.
 
 === "ESP-IDF"
 

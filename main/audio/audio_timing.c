@@ -5,6 +5,7 @@
 #include "audio_timing.h"
 
 #include "audio_output.h"
+#include "diagnostics.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "ntp_clock.h"
@@ -628,6 +629,7 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
         // path with blocking log writes.
         int64_t now_us = esp_timer_get_time();
         if (now_us - timing->last_gap_log_us > 250000) {
+          diagnostics_record_event("RTP gap concealed");
           ESP_LOGW(TAG,
                    "Gap: %ld samples (%ld ms) missing before rtp=%" PRIu32
                    " — concealing with silence (gaps=%" PRIu32 ", +%" PRIu32

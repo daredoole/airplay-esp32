@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
   cal_dsp_profile_t profile;
   biquad_t biquads[CAL_DSP_CHANNELS][CAL_DSP_MAX_FILTERS];
+  biquad_t loudness_biquads[CAL_DSP_CHANNELS][2];
   float delay[CAL_DSP_CHANNELS][CAL_DSP_DELAY_SAMPLES];
   size_t delay_length[CAL_DSP_CHANNELS];
   size_t delay_pos[CAL_DSP_CHANNELS];
@@ -46,6 +47,22 @@ typedef struct {
   int32_t volume_q15_current;
   float effective_preamp_db;
   float cascade_peak_db;
+  float loudness_bass_db;
+  float loudness_treble_db;
+  float last_output[CAL_DSP_CHANNELS];
+  float transition_from[CAL_DSP_CHANNELS];
+  uint32_t transition_total;
+  uint32_t transition_remaining;
+  bool measurement_mode;
+  int32_t measurement_volume_q15;
+  uint32_t measurement_session_id;
+  bool test_tone;
+  float test_tone_frequency_hz;
+  float test_tone_gain;
+  float test_tone_phase;
+  uint8_t test_tone_channel_mask;
+  int64_t test_tone_expires_us;
+  uint32_t dither_state;
   cal_dsp_metrics_t metrics;
   bool bypass;
   bool ready;
@@ -123,6 +140,10 @@ void calibration_dsp_default_profile(cal_dsp_profile_t *profile,
   profile->limiter.ceiling_dbfs = -1.0f;
   profile->limiter.lookahead_ms = 3.0f;
   profile->limiter.release_ms = 80.0f;
+  profile->loudness.enabled = false;
+  profile->loudness.max_bass_db = 6.0f;
+  profile->loudness.max_treble_db = 2.5f;
+  profile->loudness.full_effect_below_db = -40.0f;
 }
 
 uint32_t calibration_dsp_profile_hash(const cal_dsp_profile_t *profile) {
@@ -173,6 +194,14 @@ static esp_err_t validate_profile(const cal_dsp_profile_t *profile) {
        profile->limiter.lookahead_ms > CAL_DSP_MAX_LOOKAHEAD_MS ||
        profile->limiter.release_ms < 10.0f ||
        profile->limiter.release_ms > 1000.0f)) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (profile->loudness.max_bass_db < 0.0f ||
+      profile->loudness.max_bass_db > 12.0f ||
+      profile->loudness.max_treble_db < 0.0f ||
+      profile->loudness.max_treble_db > 6.0f ||
+      profile->loudness.full_effect_below_db > -10.0f ||
+      profile->loudness.full_effect_below_db < -80.0f) {
     return ESP_ERR_INVALID_ARG;
   }
   return ESP_OK;
@@ -284,10 +313,13 @@ static void rebuild_state(void) {
   memset(s_dsp.limiter_audio, 0, sizeof(s_dsp.limiter_audio));
   memset(s_dsp.limiter_peak, 0, sizeof(s_dsp.limiter_peak));
   memset(s_dsp.limiter_deque, 0, sizeof(s_dsp.limiter_deque));
+  memset(s_dsp.loudness_biquads, 0, sizeof(s_dsp.loudness_biquads));
   s_dsp.limiter_head = 0;
   s_dsp.limiter_tail = 0;
   s_dsp.limiter_sequence = 0;
   s_dsp.limiter_gain = 1.0f;
+  s_dsp.loudness_bass_db = -1000.0f;
+  s_dsp.loudness_treble_db = -1000.0f;
 
   for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
     const cal_dsp_channel_t *ch = &s_dsp.profile.channels[channel];
@@ -348,6 +380,8 @@ esp_err_t calibration_dsp_init(uint32_t sample_rate) {
   }
   memset(&s_dsp, 0, sizeof(s_dsp));
   s_dsp.volume_q15_current = -1;
+  s_dsp.measurement_volume_q15 = 32768;
+  s_dsp.dither_state = 0x9e3779b9U;
   s_dsp.profile = profile;
   s_dsp.bypass = !profile.enabled;
   rebuild_state();
@@ -364,9 +398,14 @@ esp_err_t calibration_dsp_set_profile(const cal_dsp_profile_t *profile) {
     return err != ESP_OK ? err : ESP_ERR_INVALID_STATE;
   }
   xSemaphoreTake(s_lock, portMAX_DELAY);
+  float transition_from[CAL_DSP_CHANNELS] = {s_dsp.last_output[0],
+                                             s_dsp.last_output[1]};
   s_dsp.profile = *profile;
   s_dsp.bypass = !profile->enabled;
   rebuild_state();
+  memcpy(s_dsp.transition_from, transition_from, sizeof(transition_from));
+  s_dsp.transition_total = profile->sample_rate / 20U;
+  s_dsp.transition_remaining = s_dsp.transition_total;
   xSemaphoreGive(s_lock);
   return ESP_OK;
 }
@@ -386,8 +425,13 @@ void calibration_dsp_set_bypass(bool bypass) {
   }
   xSemaphoreTake(s_lock, portMAX_DELAY);
   if (s_dsp.bypass != bypass) {
+    float transition_from[CAL_DSP_CHANNELS] = {s_dsp.last_output[0],
+                                               s_dsp.last_output[1]};
     s_dsp.bypass = bypass;
     rebuild_state();
+    memcpy(s_dsp.transition_from, transition_from, sizeof(transition_from));
+    s_dsp.transition_total = s_dsp.profile.sample_rate / 20U;
+    s_dsp.transition_remaining = s_dsp.transition_total;
   }
   s_dsp.metrics.bypassed = bypass;
   xSemaphoreGive(s_lock);
@@ -435,6 +479,64 @@ static float ramp_volume(int32_t target_q15) {
     s_dsp.volume_q15_current += step;
   }
   return (float)s_dsp.volume_q15_current / 32768.0f;
+}
+
+static void update_loudness(float volume_gain) {
+  if (!s_dsp.profile.loudness.enabled || s_dsp.measurement_mode) {
+    return;
+  }
+  float volume_db = gain_to_db(volume_gain);
+  float denominator = -s_dsp.profile.loudness.full_effect_below_db;
+  float amount =
+      denominator > 1.0f ? clampf(-volume_db / denominator, 0.0f, 1.0f) : 0.0f;
+  float bass_db = amount * s_dsp.profile.loudness.max_bass_db;
+  float treble_db = amount * s_dsp.profile.loudness.max_treble_db;
+  if (fabsf(bass_db - s_dsp.loudness_bass_db) < 0.25f &&
+      fabsf(treble_db - s_dsp.loudness_treble_db) < 0.25f) {
+    return;
+  }
+  s_dsp.loudness_bass_db = bass_db;
+  s_dsp.loudness_treble_db = treble_db;
+  for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
+    const float gains[2] = {bass_db, treble_db};
+    const float frequencies[2] = {120.0f, 8000.0f};
+    const cal_dsp_filter_type_t types[2] = {CAL_DSP_FILTER_LOW_SHELF,
+                                            CAL_DSP_FILTER_HIGH_SHELF};
+    for (size_t band = 0; band < 2; band++) {
+      cal_dsp_filter_t filter = {.enabled = true,
+                                 .type = types[band],
+                                 .frequency_hz = frequencies[band],
+                                 .gain_db = gains[band],
+                                 .q = 0.707f};
+      biquad_t designed;
+      design_biquad(&filter, s_dsp.profile.sample_rate, &designed);
+      designed.z1 = s_dsp.loudness_biquads[channel][band].z1;
+      designed.z2 = s_dsp.loudness_biquads[channel][band].z2;
+      s_dsp.loudness_biquads[channel][band] = designed;
+    }
+  }
+}
+
+static uint32_t dither_random(void) {
+  uint32_t x = s_dsp.dither_state;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  s_dsp.dither_state = x;
+  return x;
+}
+
+static int32_t quantize_24(float sample) {
+  float u1 = (float)(dither_random() & 0xffffU) / 65535.0f;
+  float u2 = (float)(dither_random() & 0xffffU) / 65535.0f;
+  float dither = (u1 - u2) / 8388608.0f;
+  float scaled = clampf(sample + dither, -1.0f, 0.99999988f) * 8388608.0f;
+  int32_t q24 = (int32_t)lroundf(scaled);
+  if (q24 < -8388608)
+    q24 = -8388608;
+  if (q24 > 8388607)
+    q24 = 8388607;
+  return q24 * 256;
 }
 
 static void limiter_push(float input[CAL_DSP_CHANNELS],
@@ -491,56 +593,97 @@ static void limiter_push(float input[CAL_DSP_CHANNELS],
   }
 }
 
-void calibration_dsp_process(int16_t *pcm, size_t frames,
-                             int32_t software_volume_q15) {
+static void calibration_dsp_process_common(int16_t *pcm, int32_t *pcm_i32,
+                                           size_t frames,
+                                           int32_t software_volume_q15) {
   if (!pcm || frames == 0 || !s_lock || !s_dsp.ready) {
     return;
   }
   int64_t started = esp_timer_get_time();
   xSemaphoreTake(s_lock, portMAX_DELAY);
-  if (s_dsp.bypass) {
-    for (size_t frame = 0; frame < frames; frame++) {
-      float volume = ramp_volume(software_volume_q15);
-      for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
-        float sample = (float)pcm[frame * 2U + channel] * volume;
-        pcm[frame * 2U + channel] = (int16_t)lroundf(sample);
-      }
-    }
-    s_dsp.metrics.bypassed = true;
-    xSemaphoreGive(s_lock);
-    return;
+  if (s_dsp.test_tone && s_dsp.test_tone_expires_us > 0 &&
+      esp_timer_get_time() >= s_dsp.test_tone_expires_us) {
+    s_dsp.test_tone = false;
   }
 
   float preamp = db_to_gain(s_dsp.effective_preamp_db);
   for (size_t frame = 0; frame < frames; frame++) {
-    float volume = ramp_volume(software_volume_q15);
+    int32_t target_volume = s_dsp.measurement_mode
+                                ? s_dsp.measurement_volume_q15
+                                : software_volume_q15;
+    float volume = ramp_volume(target_volume);
+    update_loudness(volume);
     float samples[CAL_DSP_CHANNELS];
     for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
       const cal_dsp_channel_t *ch = &s_dsp.profile.channels[channel];
-      float sample = (float)pcm[frame * 2U + channel] / 32768.0f;
-      sample *=
-          preamp * db_to_gain(ch->gain_db) * (ch->polarity < 0 ? -1.0f : 1.0f);
-      for (size_t i = 0; i < ch->filter_count; i++) {
-        if (ch->filters[i].enabled) {
-          sample = process_biquad(&s_dsp.biquads[channel][i], sample);
-        }
+      float sample;
+      if (s_dsp.test_tone) {
+        bool channel_enabled =
+            (s_dsp.test_tone_channel_mask & (1U << channel)) != 0;
+        sample = channel_enabled
+                     ? sinf(s_dsp.test_tone_phase) * s_dsp.test_tone_gain
+                     : 0.0f;
+      } else {
+        sample = (float)pcm[frame * 2U + channel] / 32768.0f;
       }
-      samples[channel] = process_delay(channel, sample) * volume;
+
+      if (s_dsp.bypass) {
+        samples[channel] = sample * volume;
+      } else {
+        sample *= preamp * db_to_gain(ch->gain_db) *
+                  (ch->polarity < 0 ? -1.0f : 1.0f);
+        if (s_dsp.profile.loudness.enabled && !s_dsp.measurement_mode) {
+          sample = process_biquad(&s_dsp.loudness_biquads[channel][0], sample);
+          sample = process_biquad(&s_dsp.loudness_biquads[channel][1], sample);
+        }
+        for (size_t i = 0; i < ch->filter_count; i++) {
+          if (ch->filters[i].enabled) {
+            sample = process_biquad(&s_dsp.biquads[channel][i], sample);
+          }
+        }
+        samples[channel] = process_delay(channel, sample) * volume;
+      }
+    }
+    if (s_dsp.test_tone) {
+      s_dsp.test_tone_phase += 2.0f * PI_F * s_dsp.test_tone_frequency_hz /
+                               (float)s_dsp.profile.sample_rate;
+      if (s_dsp.test_tone_phase >= 2.0f * PI_F) {
+        s_dsp.test_tone_phase -= 2.0f * PI_F;
+      }
     }
 
     float limited[CAL_DSP_CHANNELS];
-    if (s_dsp.profile.limiter.enabled) {
+    if (!s_dsp.bypass && s_dsp.profile.limiter.enabled) {
       limiter_push(samples, limited);
     } else {
       limited[0] = samples[0];
       limited[1] = samples[1];
     }
+
+    if (s_dsp.transition_remaining > 0 && s_dsp.transition_total > 0) {
+      float progress = 1.0f - (float)s_dsp.transition_remaining /
+                                  (float)s_dsp.transition_total;
+      for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
+        limited[channel] = s_dsp.transition_from[channel] * (1.0f - progress) +
+                           limited[channel] * progress;
+      }
+      s_dsp.transition_remaining--;
+    }
+
     for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
       if (fabsf(limited[channel]) > 1.0f) {
         s_dsp.metrics.clipped_samples++;
       }
-      float quantized = clampf(limited[channel], -1.0f, 0.9999695f) * 32768.0f;
-      pcm[frame * 2U + channel] = (int16_t)lroundf(quantized);
+      s_dsp.last_output[channel] = limited[channel];
+      if (pcm_i32) {
+        int32_t output = quantize_24(limited[channel]);
+        pcm_i32[frame * 2U + channel] = output;
+        pcm[frame * 2U + channel] = (int16_t)(output >> 16);
+      } else {
+        float quantized =
+            clampf(limited[channel], -1.0f, 0.9999695f) * 32768.0f;
+        pcm[frame * 2U + channel] = (int16_t)lroundf(quantized);
+      }
     }
   }
 
@@ -548,15 +691,114 @@ void calibration_dsp_process(int16_t *pcm, size_t frames,
   float audio_us =
       (float)frames * 1000000.0f / (float)s_dsp.profile.sample_rate;
   float load = audio_us > 0.0f ? 100.0f * (float)elapsed / audio_us : 0.0f;
-  s_dsp.metrics.frames_processed += frames;
+  if (!s_dsp.bypass || s_dsp.test_tone) {
+    s_dsp.metrics.frames_processed += frames;
+  }
   s_dsp.metrics.limiter_gain_db = gain_to_db(s_dsp.limiter_gain);
   s_dsp.metrics.dsp_load_percent =
       s_dsp.metrics.dsp_load_percent * 0.95f + load * 0.05f;
   if (load > s_dsp.metrics.max_dsp_load_percent) {
     s_dsp.metrics.max_dsp_load_percent = load;
   }
-  s_dsp.metrics.bypassed = false;
+  s_dsp.metrics.bypassed = s_dsp.bypass;
+  s_dsp.metrics.transition_active = s_dsp.transition_remaining > 0;
+  s_dsp.metrics.transition_remaining_ms =
+      (uint32_t)((uint64_t)s_dsp.transition_remaining * 1000ULL /
+                 s_dsp.profile.sample_rate);
+  s_dsp.metrics.measurement_mode = s_dsp.measurement_mode;
+  s_dsp.metrics.test_tone_active = s_dsp.test_tone;
+  s_dsp.metrics.measurement_session_id = s_dsp.measurement_session_id;
   xSemaphoreGive(s_lock);
+}
+
+void calibration_dsp_process(int16_t *pcm, size_t frames,
+                             int32_t software_volume_q15) {
+  calibration_dsp_process_common(pcm, NULL, frames, software_volume_q15);
+}
+
+void calibration_dsp_process_i32(int16_t *pcm, int32_t *pcm_i32, size_t frames,
+                                 int32_t software_volume_q15) {
+  if (!pcm_i32) {
+    return;
+  }
+  calibration_dsp_process_common(pcm, pcm_i32, frames, software_volume_q15);
+}
+
+esp_err_t calibration_dsp_set_measurement_mode(bool enabled,
+                                               int32_t fixed_volume_q15,
+                                               uint32_t expected_profile_hash) {
+  if (!s_lock || fixed_volume_q15 < 0 || fixed_volume_q15 > 32768) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (enabled && expected_profile_hash != 0 &&
+      expected_profile_hash != s_dsp.metrics.profile_hash) {
+    xSemaphoreGive(s_lock);
+    return ESP_ERR_INVALID_CRC;
+  }
+  s_dsp.measurement_mode = enabled;
+  s_dsp.measurement_volume_q15 = fixed_volume_q15;
+  if (enabled) {
+    s_dsp.measurement_session_id++;
+  }
+  s_dsp.metrics.measurement_mode = enabled;
+  s_dsp.metrics.measurement_session_id = s_dsp.measurement_session_id;
+  xSemaphoreGive(s_lock);
+  return ESP_OK;
+}
+
+bool calibration_dsp_get_measurement_mode(uint32_t *session_id,
+                                          int32_t *fixed_volume_q15) {
+  if (!s_lock) {
+    return false;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  bool enabled = s_dsp.measurement_mode;
+  if (session_id)
+    *session_id = s_dsp.measurement_session_id;
+  if (fixed_volume_q15)
+    *fixed_volume_q15 = s_dsp.measurement_volume_q15;
+  xSemaphoreGive(s_lock);
+  return enabled;
+}
+
+esp_err_t calibration_dsp_set_test_tone(bool enabled, float frequency_hz,
+                                        float level_dbfs, uint8_t channel_mask,
+                                        uint32_t duration_ms) {
+  if (!s_lock || (enabled && (frequency_hz < 20.0f || frequency_hz > 20000.0f ||
+                              level_dbfs > -12.0f || level_dbfs < -60.0f ||
+                              channel_mask == 0 || channel_mask > 3 ||
+                              duration_ms == 0 || duration_ms > 30000U))) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_dsp.test_tone = enabled;
+  if (enabled) {
+    s_dsp.test_tone_frequency_hz = frequency_hz;
+    s_dsp.test_tone_gain = db_to_gain(level_dbfs);
+    s_dsp.test_tone_channel_mask = channel_mask;
+    s_dsp.test_tone_phase = 0.0f;
+    s_dsp.test_tone_expires_us =
+        esp_timer_get_time() + (int64_t)duration_ms * 1000LL;
+  } else {
+    s_dsp.test_tone_expires_us = 0;
+  }
+  s_dsp.metrics.test_tone_active = enabled;
+  xSemaphoreGive(s_lock);
+  return ESP_OK;
+}
+
+bool calibration_dsp_test_tone_active(void) {
+  if (!s_lock)
+    return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  bool active =
+      s_dsp.test_tone && (s_dsp.test_tone_expires_us == 0 ||
+                          esp_timer_get_time() < s_dsp.test_tone_expires_us);
+  if (!active)
+    s_dsp.test_tone = false;
+  xSemaphoreGive(s_lock);
+  return active;
 }
 
 void calibration_dsp_reset(void) {

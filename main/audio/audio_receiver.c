@@ -574,6 +574,25 @@ void audio_receiver_get_stats(audio_stats_t *stats) {
   memcpy(stats, &receiver.stats, sizeof(receiver.stats));
 }
 
+void audio_receiver_get_health(audio_health_snapshot_t *health) {
+  if (!health) {
+    return;
+  }
+  memset(health, 0, sizeof(*health));
+  if (receiver.stream) {
+    health->stream_type = receiver.stream->type;
+    health->format = receiver.stream->format;
+  }
+  health->buffered_frames = audio_buffer_get_frame_count(&receiver.buffer);
+  health->playing = receiver.timing.playing;
+  health->playout_started = receiver.timing.playout_started;
+  health->anchor_valid = receiver.timing.anchor_valid;
+  health->ptp_locked = receiver.timing.ptp_locked;
+  health->rtp_gaps = receiver.timing.gaps;
+  health->servo_trims = receiver.timing.servo_trims;
+  health->position_error_us = receiver.timing.pos_err_filtered_us;
+}
+
 size_t audio_receiver_read(int16_t *buffer, size_t samples) {
   if (!receiver.buffer.pool || !buffer || samples == 0) {
     return 0;

@@ -219,6 +219,22 @@ typedef enum {
   AUDIO_STREAM_BUFFERED = 103 // TCP, AAC-ELD
 } audio_stream_type_t;
 
+typedef struct {
+  audio_stream_type_t stream_type;
+  audio_format_t format;
+  int32_t buffered_frames;
+  bool playing;
+  bool playout_started;
+  bool anchor_valid;
+  bool ptp_locked;
+  uint32_t rtp_gaps;
+  uint32_t servo_trims;
+  int64_t position_error_us;
+} audio_health_snapshot_t;
+
+/** Lock-free best-effort snapshot for diagnostics/telemetry. */
+void audio_receiver_get_health(audio_health_snapshot_t *health);
+
 /**
  * Start buffered audio receiver (type=103) on TCP port
  * @param tcp_port Port to listen on for TCP connections

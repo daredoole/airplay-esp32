@@ -4,6 +4,7 @@
 #include "calibration_dsp.h"
 #endif
 #include "buttons.h"
+#include "diagnostics.h"
 #include "spiram_task.h"
 #include "display.h"
 #include "dns_server.h"
@@ -11,6 +12,10 @@
 #include "led.h"
 #include "hap.h"
 #include "mdns_airplay.h"
+#include "api_security.h"
+#ifdef CONFIG_MQTT_HA_ENABLED
+#include "mqtt_ha.h"
+#endif
 #include "nvs_flash.h"
 #include "playback_control.h"
 #include "ptp_clock.h"
@@ -221,6 +226,8 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
   ESP_ERROR_CHECK(settings_init());
+  ESP_ERROR_CHECK(diagnostics_init());
+  ESP_ERROR_CHECK(api_security_init());
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
   ESP_ERROR_CHECK(calibration_dsp_init(CONFIG_OUTPUT_SAMPLE_RATE_HZ));
 #endif
@@ -337,6 +344,10 @@ void app_main(void) {
 
   // Start services that work on any interface
   web_server_start(80);
+#ifdef CONFIG_MQTT_HA_ENABLED
+  ESP_ERROR_CHECK_WITHOUT_ABORT(mqtt_ha_init());
+#endif
+  ESP_ERROR_CHECK(diagnostics_mark_boot_healthy());
   task_create_spiram(network_monitor_task, "net_mon", 4096, NULL, 5, NULL,
                      NULL);
 

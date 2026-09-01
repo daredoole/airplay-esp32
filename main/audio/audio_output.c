@@ -1,4 +1,5 @@
 #include "audio_output.h"
+#include "diagnostics.h"
 #include "rtsp_server.h"
 
 #include "audio_resample.h"
@@ -40,6 +41,14 @@
 #define I2S_DOUT_PIN  CONFIG_I2S_DO_IO
 #define OUTPUT_RATE   CONFIG_OUTPUT_SAMPLE_RATE_HZ
 #define FRAME_SAMPLES 352
+
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+#define I2S_OUTPUT_BYTES      sizeof(int32_t)
+#define I2S_OUTPUT_DATA_WIDTH I2S_DATA_BIT_WIDTH_32BIT
+#else
+#define I2S_OUTPUT_BYTES      sizeof(int16_t)
+#define I2S_OUTPUT_DATA_WIDTH I2S_DATA_BIT_WIDTH_16BIT
+#endif
 
 // DMA ring-buffer configuration.  Total DMA latency (in samples) is
 //   I2S_DMA_DESC_NUM × I2S_DMA_FRAME_NUM
@@ -88,7 +97,7 @@ static bool IRAM_ATTR audio_output_on_sent(i2s_chan_handle_t handle,
   (void)user_ctx;
   if (event && event->size > 0) {
     __atomic_add_fetch(&output_sent_frames,
-                       (uint64_t)(event->size / (2U * sizeof(int16_t))),
+                       (uint64_t)(event->size / (2U * I2S_OUTPUT_BYTES)),
                        __ATOMIC_RELAXED);
   }
   return false;
@@ -114,6 +123,7 @@ static uint32_t output_queued_frames(void) {
      * output time went out as silence. */
     __atomic_store_n(&output_lost_frames, sent - submitted, __ATOMIC_RELAXED);
     output_underruns++;
+    diagnostics_record_event("I2S DMA underrun");
     return 0;
   }
 
@@ -207,10 +217,20 @@ static void playback_task(void *arg) {
   int16_t *pcm = malloc((size_t)(FRAME_SAMPLES + 1) * 2 * sizeof(int16_t));
   int16_t *silence = calloc((size_t)FRAME_SAMPLES * 2, sizeof(int16_t));
   int16_t *resample_buf = malloc(MAX_RESAMPLE_FRAMES * 2 * sizeof(int16_t));
-  if (!pcm || !silence || !resample_buf) {
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  int32_t *i2s_buf = malloc(MAX_RESAMPLE_FRAMES * 2 * sizeof(int32_t));
+#endif
+  if (!pcm || !silence || !resample_buf
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      || !i2s_buf
+#endif
+  ) {
     ESP_LOGE(TAG, "Failed to allocate buffers");
     free(pcm);
     free(silence);
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+    free(i2s_buf);
+#endif
     playback_task_handle = NULL;
     free(resample_buf);
     vTaskDelete(NULL);
@@ -244,16 +264,21 @@ static void playback_task(void *arg) {
       }
       apply_channel_mode(play_buf, play_samples);
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
-      calibration_dsp_process(play_buf, play_samples, airplay_get_volume_q15());
+      calibration_dsp_process_i32(play_buf, i2s_buf, play_samples,
+                                  airplay_get_volume_q15());
 #else
       apply_volume(play_buf, play_samples * 2);
 #endif
       led_audio_feed(play_buf, play_samples);
-      if (i2s_channel_write(tx_handle, play_buf,
-                            play_samples * 2 * sizeof(int16_t), &written,
-                            portMAX_DELAY) == ESP_OK) {
+      if (i2s_channel_write(tx_handle,
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+                            i2s_buf, play_samples * 2 * sizeof(int32_t),
+#else
+                            play_buf, play_samples * 2 * sizeof(int16_t),
+#endif
+                            &written, portMAX_DELAY) == ESP_OK) {
         __atomic_add_fetch(&output_submitted_frames,
-                           (uint64_t)(written / (2U * sizeof(int16_t))),
+                           (uint64_t)(written / (2U * I2S_OUTPUT_BYTES)),
                            __ATOMIC_RELAXED);
       }
       taskYIELD();
@@ -261,12 +286,27 @@ static void playback_task(void *arg) {
       // Receiver underflow — output a frame of silence.  Block on the DMA
       // write (portMAX_DELAY) so the write itself paces the loop, instead of a
       // short timeout plus vTaskDelay(1) which produced jittery silence.
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      if (calibration_dsp_test_tone_active()) {
+        calibration_dsp_process_i32(silence, i2s_buf, FRAME_SAMPLES, 32768);
+        led_audio_feed(silence, FRAME_SAMPLES);
+      } else {
+        memset(i2s_buf, 0, (size_t)FRAME_SAMPLES * 2 * sizeof(int32_t));
+      }
+#else
       led_audio_feed(silence, FRAME_SAMPLES);
-      if (i2s_channel_write(tx_handle, silence,
+#endif
+      if (i2s_channel_write(tx_handle,
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+                            i2s_buf,
+                            (size_t)FRAME_SAMPLES * 2 * sizeof(int32_t),
+#else
+                            silence,
                             (size_t)FRAME_SAMPLES * 2 * sizeof(int16_t),
+#endif
                             &written, portMAX_DELAY) == ESP_OK) {
         __atomic_add_fetch(&output_submitted_frames,
-                           (uint64_t)(written / (2U * sizeof(int16_t))),
+                           (uint64_t)(written / (2U * I2S_OUTPUT_BYTES)),
                            __ATOMIC_RELAXED);
       }
     }
@@ -274,6 +314,10 @@ static void playback_task(void *arg) {
 
   free(pcm);
   free(silence);
+  free(resample_buf);
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  free(i2s_buf);
+#endif
   playback_task_handle = NULL;
   vTaskDelete(NULL);
 }
@@ -312,7 +356,7 @@ esp_err_t audio_output_init(void) {
 
   i2s_std_config_t std_cfg = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(OUTPUT_RATE),
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_OUTPUT_DATA_WIDTH,
                                                       I2S_SLOT_MODE_STEREO),
       .gpio_cfg =
           {
@@ -352,8 +396,9 @@ esp_err_t audio_output_init(void) {
 
   ESP_RETURN_ON_ERROR(i2s_channel_enable(tx_handle), TAG,
                       "channel enable failed");
-  ESP_LOGI(TAG, "I2S initialized: Rate=%u, DMA_Desc=%d, DMA_Frame=%d",
-           (unsigned int)OUTPUT_RATE, I2S_DMA_DESC_NUM, I2S_DMA_FRAME_NUM);
+  ESP_LOGI(TAG, "I2S initialized: Rate=%u, Bits=%u, DMA_Desc=%d, DMA_Frame=%d",
+           (unsigned int)OUTPUT_RATE, (unsigned)(I2S_OUTPUT_BYTES * 8U),
+           I2S_DMA_DESC_NUM, I2S_DMA_FRAME_NUM);
 
   // MCLK/BCLK/LRCK are now running. Some codecs need this edge to finish their
   // clock setup; amplifiers that manage power from board RTSP events can ignore

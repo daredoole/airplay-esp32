@@ -4,6 +4,7 @@
 
 #include "audio_decoder.h"
 
+#include "diagnostics.h"
 #include "esp_log.h"
 
 #include "alac_magic_cookie.h"
@@ -53,9 +54,11 @@ static void aac_decoder_reset(audio_decoder_t *decoder) {
   esp_audio_err_t err =
       esp_aac_dec_open(&aac_cfg, sizeof(aac_cfg), &decoder->aac_decoder);
   if (err != ESP_AUDIO_ERR_OK) {
+    diagnostics_record_event("AAC decoder reset failed");
     ESP_LOGE(TAG, "AAC decoder reset failed: %d", err);
     decoder->aac_decoder = NULL;
   } else {
+    diagnostics_record_event("AAC decoder reset");
     ESP_LOGW(TAG, "AAC decoder reset OK");
   }
 }

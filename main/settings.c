@@ -29,6 +29,8 @@ static const char *TAG = "settings";
 #define NVS_KEY_DUAL_MODE      "dual_mode"
 #define NVS_KEY_DSP_PROFILE    "dsp_profile"
 #define NVS_KEY_DSP_BACKUP     "dsp_backup"
+#define NVS_KEY_API_TOKEN      "api_token"
+#define NVS_KEY_MQTT_CONFIG    "mqtt_config"
 
 #define MAX_WIFI_SSID_LEN     32
 #define MAX_WIFI_PASSWORD_LEN 64
@@ -891,4 +893,80 @@ esp_err_t settings_get_dsp_backup(void *data, size_t *len) {
 
 esp_err_t settings_set_dsp_backup(const void *data, size_t len) {
   return settings_set_blob(NVS_KEY_DSP_BACKUP, data, len);
+}
+
+esp_err_t settings_get_dsp_slot(uint8_t slot, void *data, size_t *len) {
+  if (slot >= SETTINGS_DSP_PROFILE_SLOTS) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  char key[16];
+  snprintf(key, sizeof(key), "dsp_slot_%u", (unsigned)slot);
+  return settings_get_blob(key, data, len);
+}
+
+esp_err_t settings_set_dsp_slot(uint8_t slot, const void *data, size_t len) {
+  if (slot >= SETTINGS_DSP_PROFILE_SLOTS) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  char key[16];
+  snprintf(key, sizeof(key), "dsp_slot_%u", (unsigned)slot);
+  return settings_set_blob(key, data, len);
+}
+
+esp_err_t settings_delete_dsp_slot(uint8_t slot) {
+  if (slot >= SETTINGS_DSP_PROFILE_SLOTS) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  char key[16];
+  snprintf(key, sizeof(key), "dsp_slot_%u", (unsigned)slot);
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+  if (err != ESP_OK) {
+    return err;
+  }
+  err = nvs_erase_key(nvs, key);
+  if (err == ESP_OK) {
+    err = nvs_commit(nvs);
+  }
+  nvs_close(nvs);
+  return err;
+}
+
+esp_err_t settings_get_api_token(char *token, size_t *len) {
+  if (!token || !len) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+  if (err != ESP_OK) {
+    return ESP_ERR_NOT_FOUND;
+  }
+  err = nvs_get_str(nvs, NVS_KEY_API_TOKEN, token, len);
+  nvs_close(nvs);
+  return err;
+}
+
+esp_err_t settings_set_api_token(const char *token) {
+  if (!token || token[0] == '\0') {
+    return ESP_ERR_INVALID_ARG;
+  }
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+  if (err != ESP_OK) {
+    return err;
+  }
+  err = nvs_set_str(nvs, NVS_KEY_API_TOKEN, token);
+  if (err == ESP_OK) {
+    err = nvs_commit(nvs);
+  }
+  nvs_close(nvs);
+  return err;
+}
+
+esp_err_t settings_get_mqtt_config(void *data, size_t *len) {
+  return settings_get_blob(NVS_KEY_MQTT_CONFIG, data, len);
+}
+
+esp_err_t settings_set_mqtt_config(const void *data, size_t len) {
+  return settings_set_blob(NVS_KEY_MQTT_CONFIG, data, len);
 }

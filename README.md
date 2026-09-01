@@ -19,7 +19,7 @@ This is my audiophile-focused fork of [rbouteiller/airplay-esp32](https://github
 
 This fork keeps that foundation and adds the part I wanted for a cheap ESP32-S3 + PCM5102A box: a real, measurable calibration target. No magic audiophile dust. Measure the room, make conservative corrections, apply them to the streamer, then measure again and keep the profile only if it is actually better.
 
-> **Project status:** the DSP, REST API, REW import, rollback, telemetry and web controls are implemented, and the `esp32s3` firmware build passes. Listening tests, long-run thermal/load tests and multi-room timing checks on physical hardware are still required before calling this production-ready.
+> **Project status:** the full DSP/control stack builds for the exact ESP32-S3 N16R8 target and has been exercised over AirPlay on hardware. The DAC/amp listening test, long-run load test and multi-room timing check still need the analog hardware connected.
 
 ![Calibration DSP control page](docs/assets/dsp-control.png)
 
@@ -31,7 +31,8 @@ This fork uses a different signal path:
 
 ```text
 AirPlay decode → float preamp → 10-band PEQ L/R → gain / delay / polarity
-               → AirPlay volume → stereo look-ahead limiter → int16 I²S → PCM5102A
+               → AirPlay volume → stereo look-ahead limiter
+               → TPDF dither → 24-bit audio in 32-bit I²S slots → PCM5102A
 ```
 
 The important bit is where quantization happens: the filters, channel alignment, volume and limiter all run in float. The signal is clamped and converted back to PCM only once, at the I²S boundary.
@@ -45,6 +46,10 @@ The important bit is where quantization happens: the filters, channel alignment,
 - **AirPlay sync awareness** — active limiter look-ahead is added to the reported output latency instead of silently shifting multi-room playback.
 - **Apply/verify identity** — every accepted profile gets a stable hash so an MCP can prove the filter set under test is the one it sent.
 - **Useful telemetry** — limiter reduction, clipped-sample count, DSP load, output underruns, processed frames and fixed DSP latency.
+- **Profiles without pops** — eight named NVS slots and a 50 ms transition when profiles or bypass state change.
+- **Measurement mode** — locks a known software volume, disables loudness and rejects a stale profile hash.
+- **Reliability view** — stream format, PTP state, RTP gaps, decoder resets, crash count, PSRAM, underruns and OTA validation state.
+- **Home Assistant discovery** — optional trusted-LAN MQTT telemetry and controls.
 - **One-step rollback** — the previous profile is saved in NVS before a new one becomes active.
 
 The saved profile boots bypassed until you deliberately apply one. A firmware upgrade should not quietly change the sound.
@@ -89,6 +94,8 @@ pio run -e esp32s3 -t uploadfs
 
 Join the temporary setup network, give the receiver your Wi-Fi credentials, then open its IP address. The **Calibration DSP** button appears when the firmware reports DSP support.
 
+This fork's hardware target is the **ESP32-S3 N16R8**: 16 MB flash and 8 MB octal PSRAM. The firmware creates a random API token on first boot and prints it once over USB. If you miss it, hold the physical **BOOT** button and use **Hold BOOT + Reveal** in the web UI. Read-only status and first-time Wi-Fi setup remain open.
+
 The default output stays at **44.1 kHz**, AirPlay's native rate, so the PCM5102A path does not resample normal AirPlay audio.
 
 ## REW and Audio Calibration MCP
@@ -120,10 +127,15 @@ keep if better · rollback if worse
 | `POST /api/dsp/bypass` | Runtime A/B comparison without deleting the profile |
 | `POST /api/dsp/rollback` | Restore the last saved profile |
 | `GET /api/dsp/metrics` | Read limiter, clipping, CPU, underrun and latency telemetry |
+| `GET /api/dsp/profiles` | List eight flash-backed profile slots |
+| `POST /api/dsp/measurement` | Lock measurement volume and verify the profile hash |
+| `GET /api/audio/health` | Read stream, timing, memory and crash diagnostics |
+| `POST /api/audio/test-tone` | Run a bounded low-level channel/output check |
+| `PUT /api/mqtt/config` | Configure Home Assistant MQTT discovery |
 
 The complete payload contract and validation limits are in [the calibration DSP reference](docs/calibration-dsp.md). A ready-to-edit payload lives at [examples/dsp-profile.json](examples/dsp-profile.json).
 
-> The HTTP API has no authentication. Keep the receiver on a trusted LAN; do not expose it directly to the internet.
+> Mutating requests require `X-AirPlay-Token` or `Authorization: Bearer …`. The web server is still HTTP, so keep it on a trusted LAN and never expose it directly to the internet.
 
 ## What stays from upstream
 
@@ -139,7 +151,7 @@ The new software calibration path is intentionally limited to standard I²S buil
 
 ## Sensible next steps
 
-The next features should earn their complexity. Hardware validation and measurement repeatability come first. After that, the useful additions are named profile slots, click-free profile crossfades, measurement-mode volume locking, Home Assistant entities and a 24/32-bit I²S output path. Giant FIR correction can wait; ten careful IIR filters are the better trade for this hardware.
+Connect the PCM5102A and amplifier, confirm pinout and channel polarity, then run a repeatable pre/post REW sweep. After that: long-run AirPlay load testing and multi-room latency validation. Giant FIR correction can wait; ten careful IIR filters remain the better trade for this hardware.
 
 ## Credits and license
 

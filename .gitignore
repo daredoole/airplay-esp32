@@ -1,6 +1,7 @@
 .cache/
 .claude/
 .pio/
+keys/*.pem
 .venv/
 .venv-zensical/
 .vscode/

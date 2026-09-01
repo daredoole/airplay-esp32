@@ -263,6 +263,8 @@ esp_err_t settings_set_biamp_eq(const float gains_db[2][2][SETTINGS_WAY_BANDS]);
 
 // ---- Calibration DSP profile blobs ----
 
+#define SETTINGS_DSP_PROFILE_SLOTS 8U
+
 /** Read/write the active versioned DSP profile without coupling settings to
  * the profile's C type. The caller validates version and exact blob size. */
 esp_err_t settings_get_dsp_profile(void *data, size_t *len);
@@ -271,3 +273,16 @@ esp_err_t settings_set_dsp_profile(const void *data, size_t len);
 /** One-generation backup used by the API's atomic rollback operation. */
 esp_err_t settings_get_dsp_backup(void *data, size_t *len);
 esp_err_t settings_set_dsp_backup(const void *data, size_t len);
+
+/** Eight named profile slots used by the UI, MCP, and Home Assistant. */
+esp_err_t settings_get_dsp_slot(uint8_t slot, void *data, size_t *len);
+esp_err_t settings_set_dsp_slot(uint8_t slot, const void *data, size_t len);
+esp_err_t settings_delete_dsp_slot(uint8_t slot);
+
+/** Pairing-generated bearer token for mutating HTTP endpoints. */
+esp_err_t settings_get_api_token(char *token, size_t *len);
+esp_err_t settings_set_api_token(const char *token);
+
+/** Opaque MQTT configuration blob owned and versioned by mqtt_ha.c. */
+esp_err_t settings_get_mqtt_config(void *data, size_t *len);
+esp_err_t settings_set_mqtt_config(const void *data, size_t len);

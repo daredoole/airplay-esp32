@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "api_security.h"
 
 #include "esp_log.h"
 #include "esp_http_server.h"
@@ -312,6 +313,8 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
 }
 
 static esp_err_t device_name_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char content[256];
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
   if (ret <= 0) {
@@ -368,6 +371,8 @@ static esp_err_t led_brightness_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t led_brightness_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char content[64];
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
   if (ret <= 0) {
@@ -459,6 +464,8 @@ static esp_err_t channel_mode_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t channel_mode_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char *content = recv_body(req, 128);
   if (!content) {
     httpd_resp_send_500(req);
@@ -591,6 +598,8 @@ static esp_err_t sub_offset_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t sub_offset_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char *content = recv_body(req, 2048);
   if (!content) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
@@ -699,6 +708,8 @@ static esp_err_t dual_mode_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t dual_mode_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char *content = recv_body(req, 128);
   if (!content) {
     httpd_resp_send_500(req);
@@ -810,6 +821,8 @@ static esp_err_t biamp_persist_gains(void) {
 }
 
 static esp_err_t biamp_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char *content = recv_body(req, 2048);
   if (!content) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
@@ -882,6 +895,8 @@ static esp_err_t biamp_post_handler(httpd_req_t *req) {
 #endif /* CONFIG_DAC_TAS58XX */
 
 static esp_err_t ota_update_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   if (req->content_len == 0) {
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No firmware uploaded");
     return ESP_FAIL;
@@ -1028,6 +1043,8 @@ static esp_err_t system_info_handler(httpd_req_t *req) {
 }
 
 static esp_err_t system_restart_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   cJSON *json = cJSON_CreateObject();
   cJSON_AddBoolToObject(json, "success", true);
 
@@ -1066,6 +1083,8 @@ static bool is_path_allowed(const char *path) {
 }
 
 static esp_err_t fs_upload_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   // Get target path from query string
   char query[128] = {0};
   char path[64] = {0};
@@ -1127,6 +1146,8 @@ static esp_err_t fs_upload_handler(httpd_req_t *req) {
 }
 
 static esp_err_t fs_delete_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char query[128] = {0};
   char path[64] = {0};
 
@@ -1244,6 +1265,8 @@ static esp_err_t eq_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t eq_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
   char content[512];
   int ret = httpd_req_recv(req, content, sizeof(content) - 1);
   if (ret <= 0) {
@@ -1318,7 +1341,8 @@ esp_err_t web_server_start(uint16_t port) {
   config.max_uri_handlers =
       30; // Room for captive portal + EQ + speedtest + brightness + channel
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
-  config.max_uri_handlers += 8; // DSP page, profiles, REW, rollback, telemetry
+  config.max_uri_handlers +=
+      20; // DSP, health, profiles, security and telemetry
 #endif
 #ifdef DAC_HAS_SUB_OFFSET
   config.max_uri_handlers += 2; // sub level get/post

@@ -2,6 +2,7 @@ set( SRC_FILES
     "main.c"
     "alac_magic_cookie.c"
     "settings.c"
+    "diagnostics.c"
     "audio/audio_receiver.c"
     "audio/audio_stream.c"
     "audio/audio_stream_realtime.c"
@@ -38,6 +39,7 @@ set( SRC_FILES
     "network/ota.c"
     "network/dns_server.c"
     "network/log_stream.c"
+    "network/api_security.c"
     "led.c"
     "audio/eq_events.c"
     "buttons.c"
@@ -50,6 +52,10 @@ if(CONFIG_AUDIO_CALIBRATION_DSP)
         "audio/calibration_dsp.c"
         "network/dsp_api.c"
     )
+endif()
+
+if(CONFIG_MQTT_HA_ENABLED)
+    list(APPEND SRC_FILES "network/mqtt_ha.c")
 endif()
 
 # Select audio output implementation at compile time. audio_output_common.c
@@ -108,6 +114,11 @@ set( DEPS
     esp_eth
     spiffs_storage
 )
+
+# MQTT component only needed when Home Assistant telemetry is enabled
+if(CONFIG_MQTT_HA_ENABLED)
+    list(APPEND DEPS mqtt)
+endif()
 
 # Bluetooth component only needed when A2DP is enabled
 #if(CONFIG_BT_A2DP_ENABLE)

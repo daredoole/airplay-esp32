@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CAL_DSP_PROFILE_VERSION  1U
-#define CAL_DSP_API_VERSION      1U
+#define CAL_DSP_PROFILE_VERSION  2U
+#define CAL_DSP_API_VERSION      2U
 #define CAL_DSP_CHANNELS         2U
 #define CAL_DSP_MAX_FILTERS      10U
 #define CAL_DSP_MAX_DELAY_MS     10.0f
@@ -44,6 +44,13 @@ typedef struct {
 } cal_dsp_limiter_t;
 
 typedef struct {
+  bool enabled;
+  float max_bass_db;
+  float max_treble_db;
+  float full_effect_below_db;
+} cal_dsp_loudness_t;
+
+typedef struct {
   uint32_t version;
   uint32_t sample_rate;
   char name[32];
@@ -53,6 +60,7 @@ typedef struct {
   float headroom_margin_db;
   cal_dsp_channel_t channels[CAL_DSP_CHANNELS];
   cal_dsp_limiter_t limiter;
+  cal_dsp_loudness_t loudness;
 } cal_dsp_profile_t;
 
 typedef struct {
@@ -67,6 +75,11 @@ typedef struct {
   float dsp_load_percent;
   float max_dsp_load_percent;
   bool bypassed;
+  bool transition_active;
+  bool measurement_mode;
+  bool test_tone_active;
+  uint32_t transition_remaining_ms;
+  uint32_t measurement_session_id;
 } cal_dsp_metrics_t;
 
 /** Initialize the DSP and load a saved profile when one is available. */
@@ -92,6 +105,23 @@ bool calibration_dsp_get_bypass(void);
  */
 void calibration_dsp_process(int16_t *pcm, size_t frames,
                              int32_t software_volume_q15);
+
+/** Process to signed 24-bit PCM left-aligned in 32-bit I2S slots. */
+void calibration_dsp_process_i32(int16_t *pcm, int32_t *pcm_i32, size_t frames,
+                                 int32_t software_volume_q15);
+
+/** Lock gain and disable loudness for repeatable measurements. */
+esp_err_t calibration_dsp_set_measurement_mode(bool enabled,
+                                               int32_t fixed_volume_q15,
+                                               uint32_t expected_profile_hash);
+bool calibration_dsp_get_measurement_mode(uint32_t *session_id,
+                                          int32_t *fixed_volume_q15);
+
+/** Safe, time-limited I2S path test signal. channel_mask: 1=L, 2=R, 3=both. */
+esp_err_t calibration_dsp_set_test_tone(bool enabled, float frequency_hz,
+                                        float level_dbfs, uint8_t channel_mask,
+                                        uint32_t duration_ms);
+bool calibration_dsp_test_tone_active(void);
 
 /** Clear filter, delay, and limiter history after flush/seek. */
 void calibration_dsp_reset(void);

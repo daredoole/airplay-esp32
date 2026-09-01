@@ -36,6 +36,12 @@ static esp_err_t ota_validate_image(const uint8_t *image, size_t len) {
   }
 
   if (header->hash_appended) {
+#ifdef CONFIG_SECURE_SIGNED_APPS
+    // A v2 signature block follows the ordinary image hash, so the hash is
+    // not the final 32 bytes. esp_ota_end() parses the image layout and
+    // verifies both the embedded hash and the RSA signature after writing.
+    ESP_LOGI(TAG, "Signed image validation delegated to esp_ota_end");
+#else
     if (len < 32) {
       ESP_LOGE(TAG, "Image claims hash but is too small");
       return ESP_ERR_INVALID_SIZE;
@@ -52,6 +58,7 @@ static esp_err_t ota_validate_image(const uint8_t *image, size_t len) {
       return ESP_ERR_INVALID_STATE;
     }
     ESP_LOGI(TAG, "SHA-256 verified OK");
+#endif
   }
 
   return ESP_OK;

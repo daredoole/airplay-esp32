@@ -214,6 +214,16 @@ menu "Airplay ESP Configuration"
             used by Audio Calibration MCP. The saved profile defaults to
             bypass so an upgrade does not silently change the sound.
 
+    config MQTT_HA_ENABLED
+        bool "MQTT telemetry and Home Assistant discovery"
+        default y if IDF_TARGET_ESP32S3 && AUDIO_CALIBRATION_DSP
+        depends on AUDIO_CALIBRATION_DSP
+        help
+            Publishes DSP/audio health through MQTT discovery and accepts
+            broker-authenticated bypass, measurement-mode, and profile-slot
+            commands. Broker credentials are configured through the protected
+            web API and never returned by it.
+
     config RESAMPLER_TAPS
         int "Resampler filter taps (quality)" if OUTPUT_SAMPLE_RATE_48000
         range 4 64

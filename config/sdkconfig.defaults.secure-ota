@@ -1,0 +1,6 @@
+# Verify application images with Secure Boot V2 signatures without enabling
+# irreversible eFuses. OTA is protected while USB recovery remains possible.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_RSA_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="keys/ota_signing_key.pem"

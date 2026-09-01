@@ -51,6 +51,12 @@ input:focus{outline:none;border-color:#e94560}
 <div class='wrap'>
 <div class='header'><h1>AirPlay Receiver</h1><p>ESP32 Configuration Panel</p></div>
 <div id='status-bar' class='status-bar'>Loading...</div>
+<div class='card'><h2>Protected Changes</h2>
+<p style='color:#888;font-size:13px;margin-bottom:12px'>Paste the API token printed once in the USB boot log. Read-only status and first-time WiFi setup stay accessible.</p>
+<div class='form-group'><label>API Token</label><input type='password' id='api-token' autocomplete='off' placeholder='64-character device token'></div>
+<button class='btn btn-secondary' onclick='saveApiToken()'>Save in this browser</button>
+<button class='btn btn-secondary' onclick='revealApiToken()'>Hold BOOT + Reveal</button>
+<div id='token-msg'></div></div>
 <div class='card'><h2>WiFi Network</h2>
 <button class='btn btn-secondary' onclick='scanWiFi()'>Scan Networks</button>
 <div id='wifi-list' class='wifi-list'></div>
@@ -119,6 +125,15 @@ input:focus{outline:none;border-color:#e94560}
 <a href='/speedtest' class='btn btn-primary'>Open Speedtest</a></div>
 </div>
 <script>
+var nativeFetch=window.fetch.bind(window);
+window.fetch=function(input,init){
+  init=init||{};var method=(init.method||'GET').toUpperCase();
+  var token=localStorage.getItem('airplayApiToken')||'';
+  if(method!=='GET'&&token){var headers=new Headers(init.headers||{});headers.set('X-AirPlay-Token',token);init.headers=headers;}
+  return nativeFetch(input,init);
+};
+function saveApiToken(){var token=document.getElementById('api-token').value.trim();localStorage.setItem('airplayApiToken',token);msg('token-msg',token?'Token saved locally.':'Token cleared.','ok');}
+async function revealApiToken(){try{var r=await nativeFetch('/api/security/reveal',{method:'POST'});var d=await r.json();if(!r.ok)throw Error(d.error||'Reveal failed');document.getElementById('api-token').value=d.token;saveApiToken();}catch(e){msg('token-msg',e.message,'err');}}
 function msg(id,txt,type){var e=document.getElementById(id);if(e){e.innerHTML='<div class="msg '+type+'">'+txt+'</div>';setTimeout(function(){e.innerHTML='';},4000);}}
 async function scanWiFi(){
   var l=document.getElementById('wifi-list');l.innerHTML='<div class="msg info">Scanning...</div>';
@@ -249,6 +264,7 @@ async function loadInfo(){
       if(i.dual_supported&&!dualLoaded){dualLoaded=true;loadDual();}
       document.getElementById('dev-name').placeholder=i.device_name||'';}}catch(e){}}
 window.onload=function(){
+  document.getElementById('api-token').value=localStorage.getItem('airplayApiToken')||'';
   document.getElementById('fw-file').onchange=function(e){var f=e.target.files[0];
     document.getElementById('fw-name').textContent=f?f.name:'No file selected';
     document.getElementById('ota-btn').disabled=!f;};

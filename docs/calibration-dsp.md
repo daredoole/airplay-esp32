@@ -20,7 +20,7 @@ This page is the machine-facing contract for the generic I²S calibration path. 
 - Limiter look-ahead: 0.5 to 5 ms
 - Limiter release: 10 to 1000 ms
 
-Profiles are versioned. Version `1` is the only accepted version today.
+Profiles are versioned. Version `2` is the only accepted version today. It adds optional volume-dependent loudness; measurement mode always forces that layer off.
 
 ## Endpoints
 
@@ -82,6 +82,18 @@ Returns:
 - I²S output underrun count;
 - fixed limiter latency reported to AirPlay timing;
 - bypass state.
+- profile/bypass transition state;
+- measurement session and safe test-tone state.
+
+### Profiles, measurement and health
+
+- `GET /api/dsp/profiles` lists eight flash-backed slots.
+- `POST /api/dsp/profile/save`, `load` and `delete` accept `{"slot":0}` through `{"slot":7}`.
+- `POST /api/dsp/measurement` accepts `enabled`, `fixed_volume_db` and `expected_profile_hash`. A hash mismatch returns `409`.
+- `POST /api/audio/test-tone` accepts a 20–20,000 Hz tone, -60 to -12 dBFS, channel mask 1/2/3 and at most 30 seconds. It refuses to start while AirPlay is playing.
+- `GET /api/audio/health` reports codec, buffering, packet counters, RTP/PTP health, memory, resets and recent faults.
+- `GET /api/security/status` returns only a token hint. `POST /api/security/reveal` returns the token only while the physical BOOT button is held.
+- `GET /api/mqtt/status` and protected `PUT /api/mqtt/config` manage trusted-LAN Home Assistant discovery.
 
 ## MCP apply/verify rules
 
@@ -100,4 +112,8 @@ Calibration should remain cut-first and should not boost spatial nulls. Firmware
 
 ## Network safety
 
-These endpoints intentionally have no login flow because the receiver is designed as a small trusted-LAN appliance. Do not port-forward the web server or place it on an untrusted network. A future authenticated control plane would be required before treating the API as internet-safe.
+Every mutating endpoint requires the random device token in `X-AirPlay-Token` or an `Authorization: Bearer` header. The token is generated on first boot, stored in NVS and printed once in the USB log. Read-only telemetry and captive-portal Wi-Fi setup remain open.
+
+If the first log was missed, hold the board's **BOOT** button and select **Hold BOOT + Reveal** in either web page. The response is marked `no-store`; physical access is the recovery credential.
+
+Transport is plain HTTP and MQTT is intentionally limited to `mqtt://`, so this remains a trusted-LAN appliance. Do not port-forward it or place it on an untrusted network.

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "sample_rate": 44100,
   "name": "Calibrated",
   "enabled": true,
@@ -30,5 +30,11 @@
     "ceiling_dbfs": -1.0,
     "lookahead_ms": 3.0,
     "release_ms": 80.0
+  },
+  "loudness": {
+    "enabled": false,
+    "max_bass_db": 6.0,
+    "max_treble_db": 2.5,
+    "full_effect_below_db": -40.0
   }
 }

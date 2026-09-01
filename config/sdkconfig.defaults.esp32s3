@@ -3,6 +3,24 @@ CONFIG_BOARD_ESP32S3_GENERIC=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
 CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# Keep a failed OTA image pending until the application completes its
+# startup self-check. A failed boot then rolls back automatically.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Persist panic data in the dedicated coredump partition. This is deliberately
+# ELF format so espcoredump can recover task stacks and backtraces later.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=32
+
+# PlatformIO's source scanner mishandles ESP-IDF's generated certificate-bundle
+# assembly path when the MQTT component is enabled. MQTT uses broker-local
+# credentials here; a CA bundle can be supplied in a dedicated TLS build later.
+# CONFIG_MBEDTLS_CERTIFICATE_BUNDLE is not set
 
 # USB Audio Class defaults for the current usb_device_uac integration.
 # Keep both streams stereo at 48 kHz so the UAC descriptors, feedback,
