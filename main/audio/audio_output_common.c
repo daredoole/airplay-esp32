@@ -34,6 +34,19 @@ __attribute__((weak)) int32_t audio_output_get_latency_trim_us(void) {
   return 0;
 }
 
+__attribute__((weak)) bool audio_output_fade_supported(void) {
+  return false;
+}
+
+__attribute__((weak)) uint32_t audio_output_get_fade_ms(void) {
+  return 20;
+}
+
+__attribute__((weak)) esp_err_t audio_output_set_fade_ms(uint32_t fade_ms) {
+  (void)fade_ms;
+  return ESP_ERR_NOT_SUPPORTED;
+}
+
 __attribute__((weak)) void audio_output_set_stream_active(bool active) {
   (void)active;
 }
