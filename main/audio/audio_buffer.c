@@ -117,18 +117,36 @@ esp_err_t audio_buffer_init(audio_buffer_t *buffer) {
 
   portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
   buffer->lock = lock;
-  buffer->capacity = MAX_RING_BUFFER_FRAMES;
   buffer->slot_size = BYTES_PER_FRAME;
   buffer->count = 0;
 
-  /* Pool in PSRAM */
-  buffer->pool =
-      (uint8_t *)heap_caps_malloc((size_t)buffer->capacity * buffer->slot_size,
-                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  /* Keep the full multi-second jitter buffer in PSRAM when available.  The
+     classic 4 MB ESP32 target has no PSRAM, so use a deliberately smaller
+     internal-RAM pool instead of entering a reboot loop at startup. */
+  bool use_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0;
+  buffer->capacity =
+      use_psram ? MAX_RING_BUFFER_FRAMES : INTERNAL_RING_BUFFER_FRAMES;
+  uint32_t pool_caps = use_psram ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                                 : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  buffer->pool = (uint8_t *)heap_caps_malloc(
+      (size_t)buffer->capacity * buffer->slot_size, pool_caps);
+
+  /* A configured-but-unavailable PSRAM chip should still degrade safely. */
+  if (!buffer->pool && use_psram) {
+    ESP_LOGW(TAG, "PSRAM pool unavailable; using reduced internal-RAM pool");
+    use_psram = false;
+    buffer->capacity = INTERNAL_RING_BUFFER_FRAMES;
+    buffer->pool = (uint8_t *)heap_caps_malloc(
+        (size_t)buffer->capacity * buffer->slot_size,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
   if (!buffer->pool) {
-    ESP_LOGE(TAG, "Failed to allocate pool in PSRAM");
+    ESP_LOGE(TAG, "Failed to allocate %d-slot audio pool in %s RAM",
+             buffer->capacity, use_psram ? "external" : "internal");
     return ESP_ERR_NO_MEM;
   }
+
+  ESP_LOGI(TAG, "Audio pool using %s RAM", use_psram ? "external" : "internal");
 
   /* Sorted index array + free stack (internal RAM is fine, they're small) */
   buffer->sorted = (uint16_t *)malloc(buffer->capacity * sizeof(uint16_t));

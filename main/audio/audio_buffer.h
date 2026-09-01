@@ -23,7 +23,8 @@ typedef struct __attribute__((packed)) {
   uint8_t reserved;
 } audio_frame_header_t;
 
-#define MAX_RING_BUFFER_FRAMES 1000
+#define MAX_RING_BUFFER_FRAMES      1000
+#define INTERNAL_RING_BUFFER_FRAMES 32
 #define BYTES_PER_FRAME                                          \
   ((size_t)sizeof(audio_frame_header_t) +                        \
    ((size_t)AAC_FRAMES_PER_PACKET * (size_t)AUDIO_MAX_CHANNELS * \
@@ -31,7 +32,7 @@ typedef struct __attribute__((packed)) {
 #define AUDIO_BUFFER_SIZE (MAX_RING_BUFFER_FRAMES * BYTES_PER_FRAME)
 
 typedef struct {
-  uint8_t *pool;                // Pre-allocated frame data in PSRAM
+  uint8_t *pool;                // Pre-allocated frame data (PSRAM or DRAM)
   uint16_t *sorted;             // Slot indices sorted by RTP timestamp
   uint16_t *free_stack;         // Stack of free slot indices
   int count;                    // Frames currently in buffer
