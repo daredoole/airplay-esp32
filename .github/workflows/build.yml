@@ -20,6 +20,9 @@ jobs:
           - name: esp32s2
             target: esp32s2
             sdkconfig: "config/sdkconfig.defaults;config/sdkconfig.defaults.esp32s2"
+          - name: esp32dev-4m
+            target: esp32
+            sdkconfig: "config/sdkconfig.defaults;config/sdkconfig.defaults.esp32dev-4m"
           - name: squeezeamp-bt
             target: esp32
             sdkconfig: "config/sdkconfig.defaults;config/sdkconfig.defaults.squeezeamp;config/sdkconfig.defaults.bt"
