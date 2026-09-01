@@ -82,6 +82,12 @@ input:focus{outline:none;border-color:#e94560}
 <option value='3'>Mono (L+R)</option>
 </select></div>
 <div id='chan-msg'></div></div>
+<div class='form-group' style='margin-top:18px'><label for='output-fade'>Track Transition Fade</label>
+<div class='slider-row'><input type='range' id='output-fade' min='5' max='50' step='1' value='20' oninput='updateFadeLabel()'>
+<span id='output-fade-label'>20 ms</span></div>
+<p id='output-fade-help' style='color:#888;font-size:12px;margin-top:6px'>Pop suppression; higher values are gentler but make skips slightly slower.</p></div>
+<button class='btn btn-secondary' onclick='saveOutputFade()'>Save Transition Fade</button>
+<div id='output-fade-msg'></div>
 <div id='dual-group' style='display:none;margin-top:18px'>
 <div class='form-group'><label for='dual-mode'>DAC Configuration</label>
 <select id='dual-mode' onchange='saveDual()'>
@@ -168,6 +174,18 @@ async function loadChannel(){
   catch(e){console.warn('Could not load channel mode',e);}
   applyChanLabels();
   applyAmpLayout();}
+function updateFadeLabel(){
+  document.getElementById('output-fade-label').textContent=document.getElementById('output-fade').value+' ms';}
+async function loadOutputFade(){
+  try{var r=await fetch('/api/audio/transition');var d=await r.json();
+    if(d.success){var s=document.getElementById('output-fade');s.min=d.min_ms;s.max=d.max_ms;s.value=d.fade_ms;updateFadeLabel();
+      document.getElementById('output-fade-help').textContent='Pop suppression; estimated skip pause '+(d.fade_ms+d.pipeline_ms+2)+' ms ('+d.pipeline_ms+' ms audio pipeline).';}}
+  catch(e){console.warn('Could not load transition fade',e);}}
+async function saveOutputFade(){
+  var v=Number.parseInt(document.getElementById('output-fade').value,10);
+  try{var r=await fetch('/api/audio/transition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fade_ms:v})});
+    var d=await r.json();if(d.success){msg('output-fade-msg','Saved! Applies immediately.','ok');loadOutputFade();}else{msg('output-fade-msg',d.error,'err');}}
+  catch(e){msg('output-fade-msg','Error','err');console.error('saveOutputFade failed',e);}}
 var dualDevices=1;
 var dualMode=0;
 var dualLoaded=false;
@@ -268,5 +286,5 @@ window.onload=function(){
   document.getElementById('fw-file').onchange=function(e){var f=e.target.files[0];
     document.getElementById('fw-name').textContent=f?f.name:'No file selected';
     document.getElementById('ota-btn').disabled=!f;};
-  loadInfo();loadBrightness();loadChannel();loadDspLink();setInterval(loadInfo,30000);};
+  loadInfo();loadBrightness();loadChannel();loadOutputFade();loadDspLink();setInterval(loadInfo,30000);};
 </script></body></html>

@@ -502,6 +502,51 @@ static esp_err_t channel_mode_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static esp_err_t output_fade_get_handler(httpd_req_t *req) {
+  cJSON *json = cJSON_CreateObject();
+  cJSON_AddBoolToObject(json, "success", true);
+  cJSON_AddNumberToObject(json, "fade_ms", audio_output_get_fade_ms());
+  cJSON_AddNumberToObject(json, "min_ms", 5);
+  cJSON_AddNumberToObject(json, "max_ms", 50);
+  cJSON_AddNumberToObject(json, "pipeline_ms",
+                          audio_output_get_hardware_latency_us() / 1000U);
+  char *json_str = cJSON_PrintUnformatted(json);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(json);
+  return ESP_OK;
+}
+
+static esp_err_t output_fade_post_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
+  char *content = recv_body(req, 128);
+  if (!content) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(content);
+  free(content);
+  cJSON *value = json ? cJSON_GetObjectItem(json, "fade_ms") : NULL;
+  cJSON *response = cJSON_CreateObject();
+  if (json_int_in_range(value, 5, 50) &&
+      audio_output_set_fade_ms((uint32_t)value->valueint) == ESP_OK) {
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddNumberToObject(response, "fade_ms", audio_output_get_fade_ms());
+  } else {
+    cJSON_AddBoolToObject(response, "success", false);
+    cJSON_AddStringToObject(response, "error", "Expected {\"fade_ms\": 5-50}");
+  }
+  char *json_str = cJSON_PrintUnformatted(response);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+  free(json_str);
+  cJSON_Delete(json);
+  cJSON_Delete(response);
+  return ESP_OK;
+}
+
 #ifdef DAC_HAS_SUB_OFFSET
 #ifdef CONFIG_DAC_TAS58XX
 /* The NVS blob layout and the driver's band count are declared independently,
@@ -1434,6 +1479,16 @@ esp_err_t web_server_start(uint16_t port) {
                                        .method = HTTP_POST,
                                        .handler = channel_mode_post_handler};
   httpd_register_uri_handler(s_server, &channel_mode_post_uri);
+
+  httpd_uri_t output_fade_get_uri = {.uri = "/api/audio/transition",
+                                     .method = HTTP_GET,
+                                     .handler = output_fade_get_handler};
+  httpd_register_uri_handler(s_server, &output_fade_get_uri);
+
+  httpd_uri_t output_fade_post_uri = {.uri = "/api/audio/transition",
+                                      .method = HTTP_POST,
+                                      .handler = output_fade_post_handler};
+  httpd_register_uri_handler(s_server, &output_fade_post_uri);
 
 #ifdef DAC_HAS_SUB_OFFSET
   httpd_uri_t sub_offset_get_uri = {.uri = "/api/audio/sub",

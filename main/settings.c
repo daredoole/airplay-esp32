@@ -31,6 +31,7 @@ static const char *TAG = "settings";
 #define NVS_KEY_DSP_BACKUP     "dsp_backup"
 #define NVS_KEY_API_TOKEN      "api_token"
 #define NVS_KEY_MQTT_CONFIG    "mqtt_config"
+#define NVS_KEY_OUTPUT_FADE    "out_fade"
 
 #define MAX_WIFI_SSID_LEN     32
 #define MAX_WIFI_PASSWORD_LEN 64
@@ -47,6 +48,30 @@ static bool g_bt_volume_loaded = false;
 
 static float g_eq_gains[SETTINGS_EQ_BANDS];
 static bool g_eq_loaded = false;
+
+esp_err_t settings_get_output_fade_ms(uint8_t *fade_ms) {
+  if (!fade_ms)
+    return ESP_ERR_INVALID_ARG;
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+  if (err != ESP_OK)
+    return err;
+  err = nvs_get_u8(nvs, NVS_KEY_OUTPUT_FADE, fade_ms);
+  nvs_close(nvs);
+  return err;
+}
+
+esp_err_t settings_set_output_fade_ms(uint8_t fade_ms) {
+  nvs_handle_t nvs;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+  if (err != ESP_OK)
+    return err;
+  err = nvs_set_u8(nvs, NVS_KEY_OUTPUT_FADE, fade_ms);
+  if (err == ESP_OK)
+    err = nvs_commit(nvs);
+  nvs_close(nvs);
+  return err;
+}
 
 esp_err_t settings_init(void) {
   // Load volume on init

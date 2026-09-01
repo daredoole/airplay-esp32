@@ -368,6 +368,7 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
 
 void audio_receiver_set_playing(bool playing) {
   audio_timing_set_playing(&receiver.timing, playing);
+  audio_output_set_stream_active(playing);
   if (!playing) {
     receiver.blocks_read_in_sequence = 0;
     // Snapshot the expected RTP position at the moment of pause so that
@@ -407,7 +408,7 @@ void audio_receiver_reset_timing(void) {
 }
 
 bool audio_receiver_is_playing(void) {
-  return receiver.timing.playing;
+  return receiver.timing.playing && receiver.timing.playout_started;
 }
 
 void audio_receiver_set_stream_type(audio_stream_type_t type) {
@@ -584,7 +585,7 @@ void audio_receiver_get_health(audio_health_snapshot_t *health) {
     health->format = receiver.stream->format;
   }
   health->buffered_frames = audio_buffer_get_frame_count(&receiver.buffer);
-  health->playing = receiver.timing.playing;
+  health->playing = audio_receiver_is_playing();
   health->playout_started = receiver.timing.playout_started;
   health->anchor_valid = receiver.timing.anchor_valid;
   health->ptp_locked = receiver.timing.ptp_locked;

@@ -1,7 +1,7 @@
 # Assembly
 
-No soldering skills needed. The PCM5102A plugs directly onto the ESP32 pins through a
-female header — no breadboard, no jumper wires.
+The tested build uses six short jumper wires between the ESP32-S3 and PCM5102A.
+The DAC's four mode pads may need small solder bridges before it will produce sound.
 
 ## Step 1 — Prepare the ESP32
 
@@ -23,11 +23,11 @@ The connections made through the header are:
 flowchart LR
     subgraph esp["ESP32-S3"]
         direction TB
-        P5["5V"]
+        P3["3V3"]
         P11["GPIO11"]
         P12["GPIO12"]
         P13["GPIO13"]
-        P14["GPIO14"]
+        PG["GND"]
     end
 
     subgraph dac["PCM5102A"]
@@ -37,31 +37,42 @@ flowchart LR
         DIN["DIN"]
         LCK["LCK"]
         GND["GND"]
+        SCK["SCK"]
     end
 
-    P5 ---|power| VIN
+    P3 ---|power| VIN
     P11 ---|bit clock| BCK
     P12 ---|audio data| DIN
     P13 ---|L/R select| LCK
-    P14 ---|software ground| GND
+    PG ---|ground| GND
+    PG ---|no external MCLK| SCK
 ```
 
 | ESP32-S3 pin | PCM5102A pin | Function |
 | --- | --- | --- |
-| 5V | VIN | Power for the DAC |
+| 3V3 | VIN | Power for the DAC |
 | GPIO11 | BCK | Bit clock (audio timing) |
 | GPIO12 | DIN | Audio data |
 | GPIO13 | LCK | Left/right channel select |
-| GPIO14 | GND | Software ground, pulled low by the firmware |
-| GND | GND | Ground — optional, the GPIO14 software ground is sufficient |
+| GND | GND | Shared electrical ground; any ESP32 pin marked GND works |
+| GND | SCK | PCM5102A does not require an external master clock |
 
-!!! warning "Bridge VIN/VOUT on the ESP32-S3"
+!!! warning "Do not use 5VIN or GPIO14"
 
-    On the ESP32-S3 board, bridge the VIN/VOUT solder pads if they are not already
-    connected. This lets the board take 5 V power directly. Without it the DAC will not
-    be powered.
+    On the tested YD-ESP32-S3 N16R8, `5VIN` is a power input. Use `3V3` for the
+    DAC. GPIO14 is a signal pin, not ground; use a pin physically marked `GND`.
 
-## Step 3 — Check the result
+## Step 3 — Set the DAC solder pads
+
+Set **H1L, H2L, H3H, H4L**. Each jumper has three pads: bridge the center pad
+to only the indicated H or L side. Never solder all three together.
+
+![PCM5102A solder jumper map](../assets/pcm5102a-jumper-map.svg)
+
+H3 is the `XSMT` mute control. H3H holds it high so audio is enabled; the
+firmware's configurable track-transition fade suppresses skip pops in software.
+
+## Step 4 — Check the result
 
 Your assembly should look like this:
 
@@ -87,7 +98,7 @@ Your assembly should look like this:
 The PCM5102A sits on top of the ESP32 with the 3.5 mm audio jack sticking out the end.
 Plug a USB-C cable into the ESP32 for power.
 
-## Step 4 — Print the case (optional)
+## Step 5 — Print the case (optional)
 
 A 3D-printable case is provided: [`boite-esp32.stl`](../assets/boite-esp32.stl). Print it
 with standard PLA settings. The case is designed for an assembly with pins on one side

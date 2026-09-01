@@ -19,8 +19,9 @@ This page is the machine-facing contract for the generic I²S calibration path. 
 - Limiter ceiling: -12 to 0 dBFS
 - Limiter look-ahead: 0.5 to 5 ms
 - Limiter release: 10 to 1000 ms
+- Profile-bound output latency trim: -250,000 to +250,000 µs
 
-Profiles are versioned. Version `2` is the only accepted version today. It adds optional volume-dependent loudness; measurement mode always forces that layer off.
+Profiles are versioned. Version `3` adds output-latency trim for measured multi-room alignment. Version 2 profiles already stored in NVS are migrated with a zero trim; measurement mode always forces volume-dependent loudness off.
 
 ## Endpoints
 
@@ -36,6 +37,7 @@ Returns the saved profile plus runtime values that can differ from the request:
 - `cascade_peak_db`: highest sampled response across both channel cascades
 - `profile_hash`: FNV-1a hash of the accepted profile blob
 - `bypassed`: current runtime bypass state
+- `output_latency_trim_us`: signed acoustic/output timing correction
 
 ### `PUT /api/dsp/profile`
 
@@ -83,7 +85,7 @@ Returns:
 - fixed limiter latency reported to AirPlay timing;
 - bypass state.
 - profile/bypass transition state;
-- measurement session and safe test-tone state.
+- measurement session, safe test-tone and sync-test state.
 
 ### Profiles, measurement and health
 
@@ -91,9 +93,11 @@ Returns:
 - `POST /api/dsp/profile/save`, `load` and `delete` accept `{"slot":0}` through `{"slot":7}`.
 - `POST /api/dsp/measurement` accepts `enabled`, `fixed_volume_db` and `expected_profile_hash`. A hash mismatch returns `409`.
 - `POST /api/audio/test-tone` accepts a 20–20,000 Hz tone, -60 to -12 dBFS, channel mask 1/2/3 and at most 30 seconds. It refuses to start while AirPlay is playing.
+- `POST /api/audio/sync-test` generates a Hann-windowed 2 kHz marker burst for acoustic correlation. It accepts a 250–5,000 ms interval, 5–50 ms pulse, -60 to -18 dBFS and a maximum duration of 60 seconds.
 - `GET /api/audio/health` reports codec, buffering, packet counters, RTP/PTP health, memory, resets and recent faults.
+- `GET /api/now-playing` reports playback state, sender, title, artist, album, progress and stream format. `GET /api/now-playing/artwork` serves the PSRAM-only 192 KiB bounded artwork cache with immutable revision URLs.
 - `GET /api/security/status` returns only a token hint. `POST /api/security/reveal` returns the token only while the physical BOOT button is held.
-- `GET /api/mqtt/status` and protected `PUT /api/mqtt/config` manage trusted-LAN Home Assistant discovery.
+- `GET /api/mqtt/status` and protected `PUT /api/mqtt/config` manage trusted-LAN Home Assistant discovery. Discovery includes a real `media_player` with state, volume, mute, metadata, artwork and DACP-backed transport controls where the sender supports them.
 
 ## MCP apply/verify rules
 
@@ -104,9 +108,10 @@ An `esp32_airplay` target should use this sequence:
 3. send the proposed profile;
 4. read it back and compare the returned hash;
 5. confirm `clipped_samples` and `output_underruns` are not increasing abnormally;
-6. run the post-EQ REW measurement;
-7. retain the profile only if the measured result passes the MCP's improvement criteria;
-8. call rollback when it does not.
+6. when multi-room alignment is requested, run the sync marker, measure the relative arrival time, store `output_latency_trim_us`, then verify it with a second capture;
+7. run the post-EQ REW measurement;
+8. retain the profile only if the measured result passes the MCP's improvement criteria;
+9. call rollback when it does not.
 
 Calibration should remain cut-first and should not boost spatial nulls. Firmware validation protects ranges and headroom; it cannot decide whether a correction is acoustically sane.
 

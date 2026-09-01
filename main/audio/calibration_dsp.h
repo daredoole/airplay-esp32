@@ -5,12 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CAL_DSP_PROFILE_VERSION  2U
-#define CAL_DSP_API_VERSION      2U
-#define CAL_DSP_CHANNELS         2U
-#define CAL_DSP_MAX_FILTERS      10U
-#define CAL_DSP_MAX_DELAY_MS     10.0f
-#define CAL_DSP_MAX_LOOKAHEAD_MS 5.0f
+#define CAL_DSP_PROFILE_VERSION     3U
+#define CAL_DSP_API_VERSION         3U
+#define CAL_DSP_CHANNELS            2U
+#define CAL_DSP_MAX_FILTERS         10U
+#define CAL_DSP_MAX_DELAY_MS        10.0f
+#define CAL_DSP_MAX_LOOKAHEAD_MS    5.0f
+#define CAL_DSP_MAX_LATENCY_TRIM_US 250000
 
 typedef enum {
   CAL_DSP_FILTER_PEAK = 0,
@@ -61,6 +62,8 @@ typedef struct {
   cal_dsp_channel_t channels[CAL_DSP_CHANNELS];
   cal_dsp_limiter_t limiter;
   cal_dsp_loudness_t loudness;
+  /** Acoustic/output timing correction, positive when this output is late. */
+  int32_t output_latency_trim_us;
 } cal_dsp_profile_t;
 
 typedef struct {
@@ -78,6 +81,7 @@ typedef struct {
   bool transition_active;
   bool measurement_mode;
   bool test_tone_active;
+  bool sync_test_active;
   uint32_t transition_remaining_ms;
   uint32_t measurement_session_id;
 } cal_dsp_metrics_t;
@@ -123,11 +127,27 @@ esp_err_t calibration_dsp_set_test_tone(bool enabled, float frequency_hz,
                                         uint32_t duration_ms);
 bool calibration_dsp_test_tone_active(void);
 
+/** Repeating, time-bounded 2 kHz burst for acoustic multi-room alignment. */
+esp_err_t calibration_dsp_set_sync_test(bool enabled, uint32_t interval_ms,
+                                        uint32_t pulse_ms, float level_dbfs,
+                                        uint8_t channel_mask,
+                                        uint32_t duration_ms);
+
+/** True while either protected local signal generator is active. */
+bool calibration_dsp_signal_generator_active(void);
+
 /** Clear filter, delay, and limiter history after flush/seek. */
 void calibration_dsp_reset(void);
 
 /** Fixed look-ahead delay introduced by the active limiter. */
 uint32_t calibration_dsp_get_latency_us(void);
+
+/** Signed profile-bound correction used by AirPlay playout timing. */
+int32_t calibration_dsp_get_output_latency_trim_us(void);
+
+/** Upgrade an older, prefix-compatible profile blob in place. */
+bool calibration_dsp_upgrade_profile(cal_dsp_profile_t *profile,
+                                     size_t stored_size, uint32_t sample_rate);
 
 /** Runtime telemetry for MCP apply/measure/verify workflows. */
 void calibration_dsp_get_metrics(cal_dsp_metrics_t *metrics);

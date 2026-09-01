@@ -246,12 +246,31 @@ bool playback_control_is_muted(void) {
 }
 
 int playback_control_get_volume_percent(void) {
-  if (s_muted) {
-    return 0;
-  }
   float db;
   if (settings_get_volume(&db) != ESP_OK) {
     db = -15.0f;
   }
   return (int)(db_to_dacp_percent(clamp_volume(db)) + 0.5f);
+}
+
+void playback_control_set_volume_percent(int percent) {
+  if (percent < 0)
+    percent = 0;
+  if (percent > 100)
+    percent = 100;
+  float db = VOLUME_MIN_DB +
+             ((float)percent / 100.0f) * (VOLUME_MAX_DB - VOLUME_MIN_DB);
+  airplay_set_volume(db);
+  if (s_muted) {
+    s_pre_mute_db = db;
+  } else {
+    dac_set_volume(db);
+  }
+  dacp_send_volume((float)percent);
+  ESP_LOGI(TAG, "AirPlay volume set to %d%% (%.1f dB)", percent, db);
+}
+
+void playback_control_set_muted(bool muted) {
+  if (muted != s_muted)
+    playback_control_toggle_mute();
 }

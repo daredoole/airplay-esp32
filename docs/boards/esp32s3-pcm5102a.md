@@ -10,24 +10,36 @@ For the parts list and step-by-step assembly, see
 
 ## Default I2S pins
 
-| Function | GPIO | PCM5102A pin |
+| Function | ESP32-S3 pin | PCM5102A pin |
 | --- | --- | --- |
 | Bit clock | 11 | BCK |
 | Audio data | 12 | DIN |
 | Word select (LRCLK) | 13 | LCK |
-| Software ground | 14 | GND |
-| Power | 5V | VIN |
+| Master clock reference | GND | SCK |
+| Ground | Any pin marked GND | GND |
+| Power | 3V3 | VIN |
 
-MCLK is not needed by the PCM5102A, which generates it internally. It is nonetheless
-routed to GPIO8 by default, which is useful if you want to drive a different converter
-such as a WM8805 I2S-to-S/PDIF bridge.
+MCLK is not needed by the PCM5102A because it generates the clock internally;
+ground `SCK` for this tested build. GPIO14 is not ground. Use a real ESP32 pin
+marked `GND`—all such ground pins are electrically common.
 
 Pins can be changed under **Board Configuration → Pin Configuration** in `menuconfig`.
 
-!!! warning "Bridge VIN/VOUT"
+!!! warning "Use 3V3 on this exact board"
 
-    Most ESP32-S3 boards ship with the VIN/VOUT solder pads open. Bridge them, or the
-    DAC gets no 5 V power and you hear nothing.
+    The tested YD-ESP32-S3 N16R8 board labels its USB supply pin `5VIN`; that pin
+    is an input, not a convenient 5 V output. Connect PCM5102A `VIN` to `3V3`.
+    This is the wiring that was verified working on the physical receiver.
+
+## PCM5102A mode jumpers
+
+Set the four three-pad jumpers to **H1L, H2L, H3H, H4L**. Join the center pad
+to only the named side. Never cover all three pads with solder.
+
+![PCM5102A solder jumper map](../assets/pcm5102a-jumper-map.svg)
+
+H3 is `XSMT`: H3H holds the DAC out of hardware mute. The firmware therefore
+uses its software transition fade unless you separately wire `XSMT` to a GPIO.
 
 ## Flashing
 
@@ -53,6 +65,26 @@ The S3 build keeps the DSP path in float through the limiter, applies TPDF
 dither, and sends effective 24-bit samples in 32-bit I2S slots. Open `/dsp`
 for profiles, REW import, measurement mode, diagnostics and MQTT discovery.
 Profile changes fade over 50 ms to avoid clicks.
+
+## Pop-free XSMT / amplifier mute
+
+The output now boots muted, keeps mute asserted while I²S is stopped or
+reconfigured, queues a faded-in buffer after clocks stabilize, and performs the
+reverse sequence when playback ends. To use it, connect the PCM5102A `XSMT`
+pin—or an amplifier mute/enable input—to an otherwise unused GPIO, then set:
+
+```ini
+CONFIG_MUTE_GPIO=YOUR_GPIO
+CONFIG_MUTE_GPIO_LEVEL=0
+```
+
+`0` is correct for PCM5102A XSMT because low means mute. Leave the GPIO at `-1`
+until that wire exists; the sequence remains active in software without driving
+an unknown pin.
+
+The S3 build also accepts bounded artwork by default. Images larger than 192 KiB
+are rejected and accepted images live only in PSRAM, away from the audio/DMA
+heap. `/dsp` shows title, artist, album, sender, format, progress and artwork.
 
 === "ESP-IDF"
 

@@ -51,10 +51,23 @@ void audio_output_start(void);
  */
 void audio_output_flush(void);
 
+/** Track/stream transition fade duration (5-50 ms), persisted in NVS. */
+uint32_t audio_output_get_fade_ms(void);
+esp_err_t audio_output_set_fade_ms(uint32_t fade_ms);
+
 /**
  * Stop the AirPlay playback task (for yielding I2S to another source)
  */
 void audio_output_stop(void);
+
+/**
+ * Notify the backend that decoded program audio became active/inactive.
+ * Drives the click-free gain ramp and external XSMT/amplifier mute sequence.
+ */
+void audio_output_set_stream_active(bool active);
+
+/** True when the external hardware mute line is currently asserted. */
+bool audio_output_is_hardware_muted(void);
 
 /**
  * Write raw PCM data to the I2S output.
@@ -92,6 +105,9 @@ void audio_output_set_source_rate(int rate);
  * stays correct if the DMA config or sample rate is ever changed.
  */
 uint32_t audio_output_get_hardware_latency_us(void);
+
+/** Signed user-calibrated acoustic timing correction. */
+int32_t audio_output_get_latency_trim_us(void);
 
 /**
  * Sample the live output pipeline delay: how long from now until the first

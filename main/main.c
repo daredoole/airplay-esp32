@@ -17,6 +17,7 @@
 #include "mqtt_ha.h"
 #endif
 #include "nvs_flash.h"
+#include "now_playing.h"
 #include "playback_control.h"
 #include "ptp_clock.h"
 #include "rtsp_server.h"
@@ -279,6 +280,7 @@ void app_main(void) {
   spiffs_storage_init();
   log_stream_init();
   ESP_ERROR_CHECK(playback_control_init());
+  ESP_ERROR_CHECK(now_playing_init());
   led_init();
 
   // Initialize board-specific hardware (includes I2C/SPI bus for display and

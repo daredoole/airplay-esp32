@@ -32,6 +32,9 @@ typedef struct {
   uint32_t duration_secs;           // Total track duration in seconds
   uint32_t position_secs;           // Current playback position in seconds
   bool has_artwork;                 // Whether artwork is available
+  const uint8_t *artwork_data;      // Borrowed for the synchronous event only
+  size_t artwork_size;
+  const char *artwork_mime;
 } rtsp_metadata_t;
 
 // ============================================================================

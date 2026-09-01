@@ -17,6 +17,11 @@
 #define RESPONSE_POINTS           512U
 #define PI_F                      3.14159265358979323846f
 
+/* Version 2 ended immediately before output_latency_trim_us. Keeping the new
+ * field appended makes old NVS blobs safely prefix-compatible. */
+#define CAL_DSP_PROFILE_V2_SIZE \
+  offsetof(cal_dsp_profile_t, output_latency_trim_us)
+
 typedef struct {
   float b0;
   float b1;
@@ -62,6 +67,13 @@ typedef struct {
   float test_tone_phase;
   uint8_t test_tone_channel_mask;
   int64_t test_tone_expires_us;
+  bool sync_test;
+  float sync_test_gain;
+  uint8_t sync_test_channel_mask;
+  uint32_t sync_test_interval_samples;
+  uint32_t sync_test_pulse_samples;
+  uint32_t sync_test_position;
+  int64_t sync_test_expires_us;
   uint32_t dither_state;
   cal_dsp_metrics_t metrics;
   bool bypass;
@@ -146,6 +158,23 @@ void calibration_dsp_default_profile(cal_dsp_profile_t *profile,
   profile->loudness.full_effect_below_db = -40.0f;
 }
 
+bool calibration_dsp_upgrade_profile(cal_dsp_profile_t *profile,
+                                     size_t stored_size, uint32_t sample_rate) {
+  if (!profile || profile->sample_rate != sample_rate) {
+    return false;
+  }
+  if (stored_size == sizeof(*profile) &&
+      profile->version == CAL_DSP_PROFILE_VERSION) {
+    return true;
+  }
+  if (stored_size == CAL_DSP_PROFILE_V2_SIZE && profile->version == 2U) {
+    profile->output_latency_trim_us = 0;
+    profile->version = CAL_DSP_PROFILE_VERSION;
+    return true;
+  }
+  return false;
+}
+
 uint32_t calibration_dsp_profile_hash(const cal_dsp_profile_t *profile) {
   if (!profile) {
     return 0;
@@ -165,7 +194,9 @@ static esp_err_t validate_profile(const cal_dsp_profile_t *profile) {
       profile->requested_preamp_db < -30.0f ||
       profile->requested_preamp_db > 6.0f ||
       profile->headroom_margin_db < 0.0f ||
-      profile->headroom_margin_db > 6.0f) {
+      profile->headroom_margin_db > 6.0f ||
+      profile->output_latency_trim_us < -CAL_DSP_MAX_LATENCY_TRIM_US ||
+      profile->output_latency_trim_us > CAL_DSP_MAX_LATENCY_TRIM_US) {
     return ESP_ERR_INVALID_ARG;
   }
   for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
@@ -372,9 +403,10 @@ esp_err_t calibration_dsp_init(uint32_t sample_rate) {
   }
 
   cal_dsp_profile_t profile;
+  memset(&profile, 0, sizeof(profile));
   size_t size = sizeof(profile);
   if (settings_get_dsp_profile(&profile, &size) != ESP_OK ||
-      size != sizeof(profile) || profile.sample_rate != sample_rate ||
+      !calibration_dsp_upgrade_profile(&profile, size, sample_rate) ||
       validate_profile(&profile) != ESP_OK) {
     calibration_dsp_default_profile(&profile, sample_rate);
   }
@@ -605,6 +637,10 @@ static void calibration_dsp_process_common(int16_t *pcm, int32_t *pcm_i32,
       esp_timer_get_time() >= s_dsp.test_tone_expires_us) {
     s_dsp.test_tone = false;
   }
+  if (s_dsp.sync_test && s_dsp.sync_test_expires_us > 0 &&
+      esp_timer_get_time() >= s_dsp.sync_test_expires_us) {
+    s_dsp.sync_test = false;
+  }
 
   float preamp = db_to_gain(s_dsp.effective_preamp_db);
   for (size_t frame = 0; frame < frames; frame++) {
@@ -617,7 +653,24 @@ static void calibration_dsp_process_common(int16_t *pcm, int32_t *pcm_i32,
     for (size_t channel = 0; channel < CAL_DSP_CHANNELS; channel++) {
       const cal_dsp_channel_t *ch = &s_dsp.profile.channels[channel];
       float sample;
-      if (s_dsp.test_tone) {
+      if (s_dsp.sync_test) {
+        bool channel_enabled =
+            (s_dsp.sync_test_channel_mask & (1U << channel)) != 0;
+        if (channel_enabled &&
+            s_dsp.sync_test_position < s_dsp.sync_test_pulse_samples) {
+          float phase = 2.0f * PI_F * 2000.0f *
+                        (float)s_dsp.sync_test_position /
+                        (float)s_dsp.profile.sample_rate;
+          /* Hann envelope keeps the calibration marker pop-free while its
+           * leading edge remains easy for correlation to detect. */
+          float envelope =
+              0.5f - 0.5f * cosf(2.0f * PI_F * (float)s_dsp.sync_test_position /
+                                 (float)s_dsp.sync_test_pulse_samples);
+          sample = sinf(phase) * envelope * s_dsp.sync_test_gain;
+        } else {
+          sample = 0.0f;
+        }
+      } else if (s_dsp.test_tone) {
         bool channel_enabled =
             (s_dsp.test_tone_channel_mask & (1U << channel)) != 0;
         sample = channel_enabled
@@ -650,6 +703,10 @@ static void calibration_dsp_process_common(int16_t *pcm, int32_t *pcm_i32,
       if (s_dsp.test_tone_phase >= 2.0f * PI_F) {
         s_dsp.test_tone_phase -= 2.0f * PI_F;
       }
+    }
+    if (s_dsp.sync_test && s_dsp.sync_test_interval_samples > 0) {
+      s_dsp.sync_test_position =
+          (s_dsp.sync_test_position + 1U) % s_dsp.sync_test_interval_samples;
     }
 
     float limited[CAL_DSP_CHANNELS];
@@ -707,6 +764,7 @@ static void calibration_dsp_process_common(int16_t *pcm, int32_t *pcm_i32,
                  s_dsp.profile.sample_rate);
   s_dsp.metrics.measurement_mode = s_dsp.measurement_mode;
   s_dsp.metrics.test_tone_active = s_dsp.test_tone;
+  s_dsp.metrics.sync_test_active = s_dsp.sync_test;
   s_dsp.metrics.measurement_session_id = s_dsp.measurement_session_id;
   xSemaphoreGive(s_lock);
 }
@@ -774,6 +832,7 @@ esp_err_t calibration_dsp_set_test_tone(bool enabled, float frequency_hz,
   xSemaphoreTake(s_lock, portMAX_DELAY);
   s_dsp.test_tone = enabled;
   if (enabled) {
+    s_dsp.sync_test = false;
     s_dsp.test_tone_frequency_hz = frequency_hz;
     s_dsp.test_tone_gain = db_to_gain(level_dbfs);
     s_dsp.test_tone_channel_mask = channel_mask;
@@ -801,6 +860,56 @@ bool calibration_dsp_test_tone_active(void) {
   return active;
 }
 
+esp_err_t calibration_dsp_set_sync_test(bool enabled, uint32_t interval_ms,
+                                        uint32_t pulse_ms, float level_dbfs,
+                                        uint8_t channel_mask,
+                                        uint32_t duration_ms) {
+  if (!s_lock ||
+      (enabled &&
+       (interval_ms < 250U || interval_ms > 5000U || pulse_ms < 5U ||
+        pulse_ms > 50U || pulse_ms >= interval_ms || level_dbfs > -18.0f ||
+        level_dbfs < -60.0f || channel_mask == 0 || channel_mask > 3 ||
+        duration_ms == 0 || duration_ms > 60000U))) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  s_dsp.sync_test = enabled;
+  if (enabled) {
+    s_dsp.test_tone = false;
+    s_dsp.sync_test_gain = db_to_gain(level_dbfs);
+    s_dsp.sync_test_channel_mask = channel_mask;
+    s_dsp.sync_test_interval_samples =
+        (uint32_t)((uint64_t)s_dsp.profile.sample_rate * interval_ms / 1000U);
+    s_dsp.sync_test_pulse_samples =
+        (uint32_t)((uint64_t)s_dsp.profile.sample_rate * pulse_ms / 1000U);
+    s_dsp.sync_test_position = 0;
+    s_dsp.sync_test_expires_us =
+        esp_timer_get_time() + (int64_t)duration_ms * 1000LL;
+  } else {
+    s_dsp.sync_test_expires_us = 0;
+  }
+  s_dsp.metrics.sync_test_active = enabled;
+  xSemaphoreGive(s_lock);
+  return ESP_OK;
+}
+
+bool calibration_dsp_signal_generator_active(void) {
+  if (!s_lock)
+    return false;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  int64_t now = esp_timer_get_time();
+  bool tone = s_dsp.test_tone && (s_dsp.test_tone_expires_us == 0 ||
+                                  now < s_dsp.test_tone_expires_us);
+  bool sync = s_dsp.sync_test && (s_dsp.sync_test_expires_us == 0 ||
+                                  now < s_dsp.sync_test_expires_us);
+  if (!tone)
+    s_dsp.test_tone = false;
+  if (!sync)
+    s_dsp.sync_test = false;
+  xSemaphoreGive(s_lock);
+  return tone || sync;
+}
+
 void calibration_dsp_reset(void) {
   if (!s_lock) {
     return;
@@ -821,6 +930,15 @@ uint32_t calibration_dsp_get_latency_us(void) {
                          : 0;
   xSemaphoreGive(s_lock);
   return latency;
+}
+
+int32_t calibration_dsp_get_output_latency_trim_us(void) {
+  if (!s_lock)
+    return 0;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  int32_t trim = s_dsp.ready ? s_dsp.profile.output_latency_trim_us : 0;
+  xSemaphoreGive(s_lock);
+  return trim;
 }
 
 void calibration_dsp_get_metrics(cal_dsp_metrics_t *metrics) {

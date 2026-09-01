@@ -30,6 +30,18 @@ __attribute__((weak)) uint32_t audio_output_get_underruns(void) {
   return 0;
 }
 
+__attribute__((weak)) int32_t audio_output_get_latency_trim_us(void) {
+  return 0;
+}
+
+__attribute__((weak)) void audio_output_set_stream_active(bool active) {
+  (void)active;
+}
+
+__attribute__((weak)) bool audio_output_is_hardware_muted(void) {
+  return false;
+}
+
 __attribute__((weak)) audio_channel_mode_t
 audio_output_cycle_channel_mode(void) {
   return AUDIO_CHANNEL_STEREO;

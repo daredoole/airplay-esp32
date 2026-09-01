@@ -85,11 +85,13 @@ failed attempts the device returns to setup mode on its own.
 
 Almost always wiring or power on an external DAC build.
 
-1. **Bridge the VIN/VOUT pads on the ESP32-S3.** They ship open on most boards, so the DAC
-   gets no 5 V. This is the most common cause.
-2. **Check the PCM5102A solder bridges** against
-   [the reference photo](getting-started/shopping-list.md#check-the-dac-board).
-3. **Verify the I2S pins** match [the defaults](boards/esp32s3-pcm5102a.md#default-i2s-pins)
+1. **Verify power:** PCM5102A `VIN` goes to ESP32 `3V3` on the tested
+   YD-ESP32-S3 N16R8. Its `5VIN` pin is an input.
+2. **Verify ground:** DAC `GND` goes to a real ESP32 pin marked `GND`, and DAC
+   `SCK` is also grounded. GPIO14 is not ground.
+3. **Check the PCM5102A solder bridges** are H1L, H2L, H3H, H4L against
+   [the diagram](getting-started/shopping-list.md#check-the-dac-board).
+4. **Verify the I2S pins** match [the defaults](boards/esp32s3-pcm5102a.md#default-i2s-pins)
    — BCK on GPIO11, DIN on GPIO12, LCK on GPIO13.
 4. **Check the volume.** Both the sender's volume and the device's own setting in the web
    interface apply.

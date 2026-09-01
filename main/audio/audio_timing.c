@@ -213,7 +213,9 @@ static bool compute_early_us(const audio_timing_t *timing,
     now_us = esp_timer_get_time();
     pipeline_us = audio_output_get_hardware_latency_us();
   }
-  target_ns -= (int64_t)(pipeline_us + PIPELINE_LATENCY_US) * 1000LL;
+  int64_t effective_pipeline_us = (int64_t)pipeline_us + PIPELINE_LATENCY_US +
+                                  audio_output_get_latency_trim_us();
+  target_ns -= effective_pipeline_us * 1000LL;
 
   *early_us = (target_ns / 1000LL) - now_us;
 
@@ -332,7 +334,11 @@ uint32_t audio_timing_get_advertised_latency(const audio_timing_t *timing) {
   // + PIPELINE_LATENCY_US — scheduling + write delay constant
   uint32_t base =
       timing ? timing->output_latency_us : DEFAULT_BUFFER_LATENCY_US;
-  return base + audio_output_get_hardware_latency_us() + PIPELINE_LATENCY_US;
+  int64_t advertised = (int64_t)base + audio_output_get_hardware_latency_us() +
+                       PIPELINE_LATENCY_US + audio_output_get_latency_trim_us();
+  return advertised < 0            ? 0U
+         : advertised > UINT32_MAX ? UINT32_MAX
+                                   : (uint32_t)advertised;
 }
 
 void audio_timing_set_playout_latency(audio_timing_t *timing,

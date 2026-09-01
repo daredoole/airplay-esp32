@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add pop-free XSMT/amplifier sequencing with muted boot, stable-clock release, output fades and idle mute.
+- Add profile-bound multi-room latency trim and a protected acoustic sync-marker API for Audio Calibration MCP.
+- Add bounded PSRAM artwork, now-playing REST/WebUI data and a controllable Home Assistant MQTT `media_player`.
 - Add the exact ESP32-S3 N16R8 target, octal PSRAM configuration, crash partition and OTA rollback health gate.
 - Sign PlatformIO's final application binary in the secure-OTA environment.
 - Add authenticated mutations with a per-device token shown once over USB.

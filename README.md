@@ -11,7 +11,7 @@
 [![Sample rate](https://img.shields.io/badge/AirPlay-native%2044.1%20kHz-17222c?style=flat-square)](main/Kconfig.projbuild)
 [![License](https://img.shields.io/badge/license-Non--Commercial-blue?style=flat-square)](LICENSE)
 
-[Calibration DSP](#the-calibration-path) · [Build it](#build-it) · [REW + MCP](#rew-and-audio-calibration-mcp) · [Upstream](https://github.com/rbouteiller/airplay-esp32)
+[Calibration DSP](#the-calibration-path) · [Build it](#build-it) · [REW + MCP](#rew-and-audio-calibration-mcp) · [Sponsor](#support-the-project) · [Upstream](https://github.com/rbouteiller/airplay-esp32)
 
 </div>
 
@@ -19,7 +19,7 @@ This is my audiophile-focused fork of [rbouteiller/airplay-esp32](https://github
 
 This fork keeps that foundation and adds the part I wanted for a cheap ESP32-S3 + PCM5102A box: a real, measurable calibration target. No magic audiophile dust. Measure the room, make conservative corrections, apply them to the streamer, then measure again and keep the profile only if it is actually better.
 
-> **Project status:** the full DSP/control stack builds for the exact ESP32-S3 N16R8 target and has been exercised over AirPlay on hardware. The DAC/amp listening test, long-run load test and multi-room timing check still need the analog hardware connected.
+> **Project status:** the full DSP/control stack builds for the exact ESP32-S3 N16R8 target, streams over AirPlay on real hardware, and has passed a PCM5102A listening test. Long-run load, calibrated REW and multi-room timing tests remain.
 
 ![Calibration DSP control page](docs/assets/dsp-control.png)
 
@@ -69,17 +69,45 @@ Default ESP32-S3 pin mapping:
 
 | PCM5102A | ESP32-S3 |
 | --- | ---: |
-| SCK / MCLK | GPIO 8 |
+| SCK / MCLK | GND |
 | BCK | GPIO 11 |
 | LCK / WS | GPIO 13 |
 | DIN | GPIO 12 |
-| GND | GND |
+| VIN | 3V3 |
+| GND | Any ESP32 pin marked GND |
+
+This is the exact wiring tested on the YD-ESP32-S3 N16R8 board used for this fork.
+Do not use GPIO14 as ground, and do not use the board's `5VIN` pin as a power
+output—it is an input on this board. The PCM5102A generates its own master clock,
+so grounding `SCK` is intentional.
+
+```mermaid
+flowchart LR
+    E3[ESP32 3V3] --> DVI[PCM5102A VIN]
+    E11[ESP32 GPIO11] --> DB[PCM5102A BCK]
+    E12[ESP32 GPIO12] --> DD[PCM5102A DIN]
+    E13[ESP32 GPIO13] --> DL[PCM5102A LCK]
+    EG[ESP32 GND] --> DG[PCM5102A GND]
+    EG --> DS[PCM5102A SCK]
+```
 
 <p align="center">
   <img src="docs/assets/ESP_PCM_front.png" alt="ESP32 and PCM5102A front" width="31%">
   <img src="docs/assets/ESP32_PCM_side.png" alt="ESP32 and PCM5102A side" width="31%">
   <img src="docs/assets/ESP_PCM_back.png" alt="ESP32 and PCM5102A back" width="31%">
 </p>
+
+### PCM5102A solder pads
+
+Set the four three-pad jumpers to **H1L, H2L, H3H, H4L**. For each jumper,
+join the center pad to only the indicated side with one solder blob. **Never
+bridge all three pads.** H3 controls `XSMT`; H3H keeps the DAC unmuted. This
+build handles track-transition pop suppression in software when H3 is fixed high.
+
+![PCM5102A solder jumper map: H1L, H2L, H3H and H4L](docs/assets/pcm5102a-jumper-map.svg)
+
+The 3.5 mm socket is line-level output: connect it to powered speakers, an
+amplifier, or a headphone amplifier—not passive headphones directly.
 
 ## Build it
 
@@ -151,7 +179,14 @@ The new software calibration path is intentionally limited to standard I²S buil
 
 ## Sensible next steps
 
-Connect the PCM5102A and amplifier, confirm pinout and channel polarity, then run a repeatable pre/post REW sweep. After that: long-run AirPlay load testing and multi-room latency validation. Giant FIR correction can wait; ten careful IIR filters remain the better trade for this hardware.
+Confirm channel polarity, then run a repeatable pre/post REW sweep. After that: long-run AirPlay load testing and multi-room latency validation. Giant FIR correction can wait; ten careful IIR filters remain the better trade for this hardware.
+
+## Support the project
+
+If this calibrated little streamer saved you time or made your system sound
+better, you can [buy me a coffee](https://buymeacoffee.com/daredoole). Support
+helps fund test hardware and the deeply unglamorous work of making cheap audio
+boards behave properly.
 
 ## Credits and license
 

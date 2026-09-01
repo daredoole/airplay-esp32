@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "audio_receiver.h"
+#include "board_common.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #ifdef CONFIG_DAC_TAS58XX
@@ -34,19 +35,24 @@
 #define I2S_VCC_PIN CONFIG_I2S_VCC_IO
 #endif
 
-#define TAG           "audio_output"
-#define I2S_SCK_PIN   CONFIG_I2S_SCK_IO
-#define I2S_BCK_PIN   CONFIG_I2S_BCK_IO
-#define I2S_LRCK_PIN  CONFIG_I2S_WS_IO
-#define I2S_DOUT_PIN  CONFIG_I2S_DO_IO
-#define OUTPUT_RATE   CONFIG_OUTPUT_SAMPLE_RATE_HZ
-#define FRAME_SAMPLES 352
+#define TAG                    "audio_output"
+#define I2S_SCK_PIN            CONFIG_I2S_SCK_IO
+#define I2S_BCK_PIN            CONFIG_I2S_BCK_IO
+#define I2S_LRCK_PIN           CONFIG_I2S_WS_IO
+#define I2S_DOUT_PIN           CONFIG_I2S_DO_IO
+#define OUTPUT_RATE            CONFIG_OUTPUT_SAMPLE_RATE_HZ
+#define FRAME_SAMPLES          352
+#define OUTPUT_FADE_DEFAULT_MS 20U
+#define OUTPUT_FADE_MIN_MS     5U
+#define OUTPUT_FADE_MAX_MS     50U
 
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
-#define I2S_OUTPUT_BYTES      sizeof(int32_t)
+typedef int32_t output_sample_t;
+#define I2S_OUTPUT_BYTES      sizeof(output_sample_t)
 #define I2S_OUTPUT_DATA_WIDTH I2S_DATA_BIT_WIDTH_32BIT
 #else
-#define I2S_OUTPUT_BYTES      sizeof(int16_t)
+typedef int16_t output_sample_t;
+#define I2S_OUTPUT_BYTES      sizeof(output_sample_t)
 #define I2S_OUTPUT_DATA_WIDTH I2S_DATA_BIT_WIDTH_16BIT
 #endif
 
@@ -70,6 +76,13 @@
 static i2s_chan_handle_t tx_handle;
 static volatile bool flush_requested = false;
 static volatile bool playback_running = false;
+static volatile bool stop_requested = false;
+static volatile bool stream_active = false;
+static volatile bool hardware_muted = true;
+static float sequence_gain = 0.0f;
+static volatile uint32_t output_fade_ms = OUTPUT_FADE_DEFAULT_MS;
+static output_sample_t last_output_left = 0;
+static output_sample_t last_output_right = 0;
 static TaskHandle_t playback_task_handle = NULL;
 static volatile int source_rate = 44100;
 static volatile bool resample_reinit_needed = false;
@@ -90,6 +103,39 @@ static uint64_t output_sent_frames;
 static uint64_t output_lost_frames;
 static uint32_t output_underruns;
 
+static bool apply_output_sequence_gain(void *buffer, size_t frames,
+                                       bool output_i32, bool active) {
+  const uint32_t fade_ms = output_fade_ms;
+  const float step = 1000.0f / ((float)OUTPUT_RATE * (float)fade_ms);
+  const float target = (active && !stop_requested) ? 1.0f : 0.0f;
+  int32_t *pcm32 = output_i32 ? buffer : NULL;
+  int16_t *pcm16 = output_i32 ? NULL : buffer;
+  for (size_t frame = 0; frame < frames; frame++) {
+    if (sequence_gain < target) {
+      sequence_gain += step;
+      if (sequence_gain > target)
+        sequence_gain = target;
+    } else if (sequence_gain > target) {
+      sequence_gain -= step;
+      if (sequence_gain < target)
+        sequence_gain = target;
+    }
+    for (size_t channel = 0; channel < 2; channel++) {
+      size_t index = frame * 2 + channel;
+      if (output_i32)
+        pcm32[index] = (int32_t)((float)pcm32[index] * sequence_gain);
+      else
+        pcm16[index] = (int16_t)((float)pcm16[index] * sequence_gain);
+    }
+  }
+  return sequence_gain <= 0.0f;
+}
+
+static void set_hardware_muted(bool muted) {
+  board_audio_set_muted(muted);
+  hardware_muted = muted;
+}
+
 static bool IRAM_ATTR audio_output_on_sent(i2s_chan_handle_t handle,
                                            i2s_event_data_t *event,
                                            void *user_ctx) {
@@ -107,6 +153,65 @@ static void output_cursor_reset(void) {
   __atomic_store_n(&output_submitted_frames, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&output_sent_frames, 0, __ATOMIC_RELAXED);
   __atomic_store_n(&output_lost_frames, 0, __ATOMIC_RELAXED);
+}
+
+static void remember_last_output_frame(const output_sample_t *buffer,
+                                       size_t frames) {
+  if (!buffer || frames == 0)
+    return;
+  last_output_left = buffer[(frames - 1) * 2];
+  last_output_right = buffer[(frames - 1) * 2 + 1];
+}
+
+/* A FLUSH can remove the receiver buffer before the normal gain ramp sees
+ * another audio frame.  Replacing the last non-zero sample with instant
+ * digital silence produces a click, especially when XSMT is strapped high.
+ * Queue a short linear tail from the last sample to zero so the discontinuity
+ * is bounded even when there is no old-track PCM left to fade. */
+static bool write_declick_tail(output_sample_t *buffer) {
+  const uint32_t fade_ms = output_fade_ms;
+  const size_t total_frames = ((size_t)OUTPUT_RATE * fade_ms + 999U) / 1000U;
+  if (!buffer || total_frames == 0 || sequence_gain <= 0.0f ||
+      (last_output_left == 0 && last_output_right == 0)) {
+    sequence_gain = 0.0f;
+    last_output_left = 0;
+    last_output_right = 0;
+    return false;
+  }
+
+  size_t offset = 0;
+  bool wrote_tail = false;
+  while (offset < total_frames) {
+    size_t chunk = total_frames - offset;
+    if (chunk > FRAME_SAMPLES)
+      chunk = FRAME_SAMPLES;
+    for (size_t frame = 0; frame < chunk; frame++) {
+      size_t remaining = total_frames - (offset + frame + 1U);
+      buffer[frame * 2] =
+          (output_sample_t)(((int64_t)last_output_left * (int64_t)remaining) /
+                            (int64_t)total_frames);
+      buffer[frame * 2 + 1] =
+          (output_sample_t)(((int64_t)last_output_right * (int64_t)remaining) /
+                            (int64_t)total_frames);
+    }
+
+    size_t written = 0;
+    if (i2s_channel_write(tx_handle, buffer,
+                          chunk * 2U * sizeof(output_sample_t), &written,
+                          portMAX_DELAY) != ESP_OK) {
+      break;
+    }
+    __atomic_add_fetch(&output_submitted_frames,
+                       (uint64_t)(written / (2U * I2S_OUTPUT_BYTES)),
+                       __ATOMIC_RELAXED);
+    wrote_tail = true;
+    offset += chunk;
+  }
+
+  sequence_gain = 0.0f;
+  last_output_left = 0;
+  last_output_right = 0;
+  return wrote_tail;
 }
 
 /* Frames queued in the DMA ring ahead of the next write.  Called from the
@@ -237,6 +342,12 @@ static void playback_task(void *arg) {
     return;
   }
 
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  output_sample_t *transition_buf = i2s_buf;
+#else
+  output_sample_t *transition_buf = resample_buf;
+#endif
+
   size_t written;
   while (playback_running) {
     if (resample_reinit_needed) {
@@ -245,6 +356,12 @@ static void playback_task(void *arg) {
     }
     if (flush_requested) {
       flush_requested = false;
+      if (write_declick_tail(transition_buf)) {
+        vTaskDelay(
+            pdMS_TO_TICKS(audio_output_get_hardware_latency_us() / 1000U +
+                          output_fade_ms + 2U));
+      }
+      set_hardware_muted(true);
       audio_resample_reset();
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
       calibration_dsp_reset();
@@ -269,6 +386,18 @@ static void playback_task(void *arg) {
 #else
       apply_volume(play_buf, play_samples * 2);
 #endif
+      bool faded_out = apply_output_sequence_gain(
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+          i2s_buf, play_samples, true, stream_active
+#else
+          play_buf, play_samples, false, stream_active
+#endif
+      );
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      remember_last_output_frame(i2s_buf, play_samples);
+#else
+      remember_last_output_frame(play_buf, play_samples);
+#endif
       led_audio_feed(play_buf, play_samples);
       if (i2s_channel_write(tx_handle,
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
@@ -280,14 +409,31 @@ static void playback_task(void *arg) {
         __atomic_add_fetch(&output_submitted_frames,
                            (uint64_t)(written / (2U * I2S_OUTPUT_BYTES)),
                            __ATOMIC_RELAXED);
+        if (stream_active && hardware_muted && !stop_requested) {
+          set_hardware_muted(false);
+        }
+      }
+      if (stop_requested && faded_out) {
+        vTaskDelay(
+            pdMS_TO_TICKS(audio_output_get_hardware_latency_us() / 1000U +
+                          output_fade_ms + 2U));
+        set_hardware_muted(true);
+        break;
       }
       taskYIELD();
     } else {
       // Receiver underflow — output a frame of silence.  Block on the DMA
       // write (portMAX_DELAY) so the write itself paces the loop, instead of a
       // short timeout plus vTaskDelay(1) which produced jittery silence.
+      bool generator_active = false;
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
-      if (calibration_dsp_test_tone_active()) {
+      generator_active = calibration_dsp_signal_generator_active();
+#endif
+      if (!generator_active && stream_active && sequence_gain > 0.0f) {
+        write_declick_tail(transition_buf);
+      }
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+      if (generator_active) {
         calibration_dsp_process_i32(silence, i2s_buf, FRAME_SAMPLES, 32768);
         led_audio_feed(silence, FRAME_SAMPLES);
       } else {
@@ -296,6 +442,13 @@ static void playback_task(void *arg) {
 #else
       led_audio_feed(silence, FRAME_SAMPLES);
 #endif
+      bool faded_out = apply_output_sequence_gain(
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+          i2s_buf, FRAME_SAMPLES, true, generator_active
+#else
+          silence, FRAME_SAMPLES, false, false
+#endif
+      );
       if (i2s_channel_write(tx_handle,
 #ifdef CONFIG_AUDIO_CALIBRATION_DSP
                             i2s_buf,
@@ -308,6 +461,21 @@ static void playback_task(void *arg) {
         __atomic_add_fetch(&output_submitted_frames,
                            (uint64_t)(written / (2U * I2S_OUTPUT_BYTES)),
                            __ATOMIC_RELAXED);
+        if (generator_active && hardware_muted && !stop_requested)
+          set_hardware_muted(false);
+      }
+      if (stop_requested && faded_out) {
+        vTaskDelay(
+            pdMS_TO_TICKS(audio_output_get_hardware_latency_us() / 1000U +
+                          output_fade_ms + 2U));
+        set_hardware_muted(true);
+        break;
+      }
+      if (!stream_active && !generator_active && faded_out && !hardware_muted) {
+        vTaskDelay(
+            pdMS_TO_TICKS(audio_output_get_hardware_latency_us() / 1000U +
+                          output_fade_ms + 2U));
+        set_hardware_muted(true);
       }
     }
   }
@@ -319,10 +487,19 @@ static void playback_task(void *arg) {
   free(i2s_buf);
 #endif
   playback_task_handle = NULL;
+  playback_running = false;
   vTaskDelete(NULL);
 }
 
 esp_err_t audio_output_init(void) {
+  set_hardware_muted(true);
+  uint8_t saved_fade_ms;
+  if (settings_get_output_fade_ms(&saved_fade_ms) == ESP_OK &&
+      saved_fade_ms >= OUTPUT_FADE_MIN_MS &&
+      saved_fade_ms <= OUTPUT_FADE_MAX_MS) {
+    output_fade_ms = saved_fade_ms;
+  }
+  ESP_LOGI(TAG, "Output transition fade: %" PRIu32 " ms", output_fade_ms);
   uint8_t saved_mode;
   if (settings_get_channel_mode(&saved_mode) == ESP_OK &&
       saved_mode <= AUDIO_CHANNEL_MONO) {
@@ -414,6 +591,13 @@ void audio_output_start(void) {
   if (playback_task_handle != NULL) {
     return; // already running
   }
+  stop_requested = false;
+  flush_requested = false;
+  stream_active = false;
+  sequence_gain = 0.0f;
+  last_output_left = 0;
+  last_output_right = 0;
+  set_hardware_muted(true);
   playback_running = true;
   // The DMA has been free-running (A2DP, or plain silence) since the last
   // AirPlay session, so the cursor carries an arbitrary submitted/sent skew.
@@ -428,7 +612,8 @@ void audio_output_stop(void) {
   if (playback_task_handle == NULL) {
     return;
   }
-  playback_running = false;
+  stop_requested = true;
+  stream_active = false;
   // Wait for task to exit cleanly
   int timeout = 40;
   while (playback_task_handle != NULL && timeout-- > 0) {
@@ -439,6 +624,18 @@ void audio_output_stop(void) {
   } else {
     ESP_LOGI(TAG, "Playback task stopped");
   }
+  set_hardware_muted(true);
+}
+
+void audio_output_set_stream_active(bool active) {
+  stream_active = active;
+  if (active) {
+    stop_requested = false;
+  }
+}
+
+bool audio_output_is_hardware_muted(void) {
+  return hardware_muted;
 }
 
 esp_err_t audio_output_write(const void *data, size_t bytes, TickType_t wait) {
@@ -451,6 +648,8 @@ void audio_output_set_sample_rate(uint32_t rate) {
   // (AirPlay playback task must be stopped, BT calls this before
   // the I2S writer task starts consuming data)
   ESP_LOGI(TAG, "Setting sample rate to %" PRIu32 " Hz", rate);
+  set_hardware_muted(true);
+  sequence_gain = 0.0f;
   i2s_channel_disable(tx_handle);
   i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate);
   i2s_channel_reconfig_std_clock(tx_handle, &clk_cfg);
@@ -461,6 +660,19 @@ void audio_output_set_sample_rate(uint32_t rate) {
 
 void audio_output_flush(void) {
   flush_requested = true;
+}
+
+uint32_t audio_output_get_fade_ms(void) {
+  return output_fade_ms;
+}
+
+esp_err_t audio_output_set_fade_ms(uint32_t fade_ms) {
+  if (fade_ms < OUTPUT_FADE_MIN_MS || fade_ms > OUTPUT_FADE_MAX_MS)
+    return ESP_ERR_INVALID_ARG;
+  esp_err_t err = settings_set_output_fade_ms((uint8_t)fade_ms);
+  if (err == ESP_OK)
+    output_fade_ms = fade_ms;
+  return err;
 }
 
 void audio_output_set_source_rate(int rate) {
@@ -493,6 +705,14 @@ uint32_t audio_output_get_hardware_latency_us(void) {
   latency += calibration_dsp_get_latency_us();
 #endif
   return latency;
+}
+
+int32_t audio_output_get_latency_trim_us(void) {
+#ifdef CONFIG_AUDIO_CALIBRATION_DSP
+  return calibration_dsp_get_output_latency_trim_us();
+#else
+  return 0;
+#endif
 }
 
 bool audio_output_get_pipeline_us(int64_t *now_us, uint32_t *pipeline_us) {

@@ -1,9 +1,10 @@
 {
-  "version": 2,
+  "version": 3,
   "sample_rate": 44100,
   "name": "Calibrated",
   "enabled": true,
   "preamp_db": -5.8,
+  "output_latency_trim_us": 0,
   "headroom": {
     "auto": true,
     "margin_db": 1.0

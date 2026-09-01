@@ -3,18 +3,22 @@
 #include "audio_output.h"
 #include "audio_receiver.h"
 #include "api_security.h"
+#include "board_common.h"
 #include "calibration_dsp.h"
 #include "cJSON.h"
 #include "diagnostics.h"
+#include "now_playing.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "ptp_clock.h"
 #include "nvs.h"
 #ifdef CONFIG_MQTT_HA_ENABLED
 #include "mqtt_ha.h"
 #endif
 #include "settings.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +107,8 @@ static cJSON *profile_to_json(const cal_dsp_profile_t *profile) {
   cJSON_AddStringToObject(json, "name", profile->name);
   cJSON_AddBoolToObject(json, "enabled", profile->enabled);
   cJSON_AddNumberToObject(json, "preamp_db", profile->requested_preamp_db);
+  cJSON_AddNumberToObject(json, "output_latency_trim_us",
+                          profile->output_latency_trim_us);
   cJSON *headroom = cJSON_AddObjectToObject(json, "headroom");
   cJSON_AddBoolToObject(headroom, "auto", profile->auto_headroom);
   cJSON_AddNumberToObject(headroom, "margin_db", profile->headroom_margin_db);
@@ -223,6 +229,14 @@ static bool parse_profile(cJSON *json, cal_dsp_profile_t *profile) {
   if (!json_number(json, "preamp_db", &profile->requested_preamp_db)) {
     return false;
   }
+  cJSON *latency_trim =
+      cJSON_GetObjectItemCaseSensitive(json, "output_latency_trim_us");
+  if (latency_trim) {
+    if (!cJSON_IsNumber(latency_trim)) {
+      return false;
+    }
+    profile->output_latency_trim_us = latency_trim->valueint;
+  }
   cJSON *headroom = cJSON_GetObjectItemCaseSensitive(json, "headroom");
   if (headroom) {
     cJSON *automatic = cJSON_GetObjectItemCaseSensitive(headroom, "auto");
@@ -317,8 +331,13 @@ static esp_err_t capabilities_handler(httpd_req_t *req) {
   cJSON_AddBoolToObject(json, "rollback", true);
   cJSON_AddNumberToObject(json, "profile_slots", SETTINGS_DSP_PROFILE_SLOTS);
   cJSON_AddBoolToObject(json, "click_free_switching", true);
+  cJSON_AddBoolToObject(json, "hardware_mute", board_audio_mute_supported());
   cJSON_AddBoolToObject(json, "measurement_mode", true);
   cJSON_AddBoolToObject(json, "test_tone", true);
+  cJSON_AddBoolToObject(json, "output_latency_trim", true);
+  cJSON_AddBoolToObject(json, "sync_test", true);
+  cJSON_AddNumberToObject(json, "max_output_latency_trim_us",
+                          CAL_DSP_MAX_LATENCY_TRIM_US);
   cJSON_AddBoolToObject(json, "i2s_32bit_slots", true);
   cJSON_AddNumberToObject(json, "i2s_effective_bits", 24);
   cJSON_AddBoolToObject(json, "tpdf_dither", true);
@@ -384,9 +403,11 @@ static esp_err_t rollback_handler(httpd_req_t *req) {
     return ESP_OK;
   (void)req;
   cal_dsp_profile_t backup;
+  memset(&backup, 0, sizeof(backup));
   size_t size = sizeof(backup);
   if (settings_get_dsp_backup(&backup, &size) != ESP_OK ||
-      size != sizeof(backup)) {
+      !calibration_dsp_upgrade_profile(&backup, size,
+                                       CONFIG_OUTPUT_SAMPLE_RATE_HZ)) {
     return send_error(req, "404 Not Found", "No rollback profile saved");
   }
   esp_err_t err = apply_and_persist(&backup);
@@ -418,6 +439,10 @@ static esp_err_t metrics_handler(httpd_req_t *req) {
                           metrics.max_dsp_load_percent);
   cJSON_AddNumberToObject(json, "output_underruns",
                           audio_output_get_underruns());
+  cJSON_AddBoolToObject(json, "hardware_mute_supported",
+                        board_audio_mute_supported());
+  cJSON_AddBoolToObject(json, "hardware_muted",
+                        audio_output_is_hardware_muted());
   cJSON_AddNumberToObject(json, "fixed_latency_us",
                           calibration_dsp_get_latency_us());
   cJSON_AddBoolToObject(json, "bypassed", metrics.bypassed);
@@ -428,6 +453,9 @@ static esp_err_t metrics_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(json, "measurement_session_id",
                           metrics.measurement_session_id);
   cJSON_AddBoolToObject(json, "test_tone_active", metrics.test_tone_active);
+  cJSON_AddBoolToObject(json, "sync_test_active", metrics.sync_test_active);
+  cJSON_AddNumberToObject(json, "output_latency_trim_us",
+                          calibration_dsp_get_output_latency_trim_us());
   return send_json(req, json);
 }
 
@@ -523,10 +551,11 @@ static esp_err_t profiles_get_handler(httpd_req_t *req) {
   cJSON *slots = cJSON_AddArrayToObject(json, "slots");
   for (uint8_t slot = 0; slot < SETTINGS_DSP_PROFILE_SLOTS; slot++) {
     cal_dsp_profile_t profile;
+    memset(&profile, 0, sizeof(profile));
     size_t size = sizeof(profile);
     bool exists = settings_get_dsp_slot(slot, &profile, &size) == ESP_OK &&
-                  size == sizeof(profile) &&
-                  profile.version == CAL_DSP_PROFILE_VERSION;
+                  calibration_dsp_upgrade_profile(&profile, size,
+                                                  CONFIG_OUTPUT_SAMPLE_RATE_HZ);
     cJSON *item = cJSON_CreateObject();
     cJSON_AddNumberToObject(item, "slot", slot);
     cJSON_AddBoolToObject(item, "exists", exists);
@@ -565,9 +594,11 @@ static esp_err_t profile_slot_load_handler(httpd_req_t *req) {
     return send_error(req, "400 Bad Request", "Expected profile slot 0-7");
   }
   cal_dsp_profile_t profile;
+  memset(&profile, 0, sizeof(profile));
   size_t size = sizeof(profile);
   if (settings_get_dsp_slot(slot, &profile, &size) != ESP_OK ||
-      size != sizeof(profile)) {
+      !calibration_dsp_upgrade_profile(&profile, size,
+                                       CONFIG_OUTPUT_SAMPLE_RATE_HZ)) {
     return send_error(req, "404 Not Found", "Profile slot is empty");
   }
   if (apply_and_persist(&profile) != ESP_OK) {
@@ -685,6 +716,48 @@ static esp_err_t test_tone_handler(httpd_req_t *req) {
   return send_json(req, response);
 }
 
+static esp_err_t sync_test_handler(httpd_req_t *req) {
+  if (api_security_require(req) != ESP_OK)
+    return ESP_OK;
+  char *body = read_body(req);
+  cJSON *json = body ? cJSON_Parse(body) : NULL;
+  free(body);
+  cJSON *enabled =
+      json ? cJSON_GetObjectItemCaseSensitive(json, "enabled") : NULL;
+  if (!cJSON_IsBool(enabled)) {
+    cJSON_Delete(json);
+    return send_error(req, "400 Bad Request", "Expected boolean enabled");
+  }
+  bool turn_on = cJSON_IsTrue(enabled);
+  if (turn_on && audio_receiver_is_playing()) {
+    cJSON_Delete(json);
+    return send_error(req, "409 Conflict",
+                      "Stop AirPlay before starting a sync test");
+  }
+  cJSON *interval = cJSON_GetObjectItemCaseSensitive(json, "interval_ms");
+  cJSON *pulse = cJSON_GetObjectItemCaseSensitive(json, "pulse_ms");
+  cJSON *level = cJSON_GetObjectItemCaseSensitive(json, "level_dbfs");
+  cJSON *channels = cJSON_GetObjectItemCaseSensitive(json, "channel_mask");
+  cJSON *duration = cJSON_GetObjectItemCaseSensitive(json, "duration_ms");
+  esp_err_t err = calibration_dsp_set_sync_test(
+      turn_on, cJSON_IsNumber(interval) ? interval->valueint : 1000U,
+      cJSON_IsNumber(pulse) ? pulse->valueint : 10U,
+      cJSON_IsNumber(level) ? (float)level->valuedouble : -30.0f,
+      cJSON_IsNumber(channels) ? (uint8_t)channels->valueint : 3,
+      cJSON_IsNumber(duration) ? duration->valueint : 15000U);
+  cJSON_Delete(json);
+  if (err != ESP_OK)
+    return send_error(req, "422 Unprocessable Entity",
+                      "Sync test must be 250-5000 ms interval, 5-50 ms pulse, "
+                      "-60..-18 dBFS, max 60 seconds");
+  cJSON *response = cJSON_CreateObject();
+  cJSON_AddBoolToObject(response, "success", true);
+  cJSON_AddBoolToObject(response, "active", turn_on);
+  cJSON_AddNumberToObject(response, "output_latency_trim_us",
+                          calibration_dsp_get_output_latency_trim_us());
+  return send_json(req, response);
+}
+
 static esp_err_t security_status_handler(httpd_req_t *req) {
   char hint[16];
   api_security_token_hint(hint, sizeof(hint));
@@ -763,6 +836,90 @@ static esp_err_t audio_health_handler(httpd_req_t *req) {
     cJSON_AddItemToArray(events, cJSON_CreateString(diagnostics.events[i]));
   }
   return send_json(req, json);
+}
+
+static esp_err_t now_playing_handler(httpd_req_t *req) {
+  now_playing_snapshot_t snapshot;
+  audio_health_snapshot_t health = {0};
+  now_playing_get_snapshot(&snapshot);
+  audio_receiver_get_health(&health);
+  uint32_t position = snapshot.metadata.position_secs;
+  if (snapshot.playing && snapshot.updated_at_us > 0) {
+    int64_t elapsed = (esp_timer_get_time() - snapshot.updated_at_us) / 1000000;
+    if (elapsed > 0 && elapsed < 86400)
+      position += (uint32_t)elapsed;
+  }
+  if (snapshot.metadata.duration_secs &&
+      position > snapshot.metadata.duration_secs)
+    position = snapshot.metadata.duration_secs;
+
+  cJSON *json = cJSON_CreateObject();
+  cJSON_AddBoolToObject(json, "success", true);
+  cJSON_AddBoolToObject(json, "connected", snapshot.connected);
+  cJSON_AddBoolToObject(json, "playing", snapshot.playing);
+  cJSON_AddStringToObject(json, "source", "AirPlay");
+  cJSON_AddStringToObject(json, "sender", snapshot.sender);
+  cJSON_AddNumberToObject(json, "protocol_version", snapshot.protocol_version);
+  cJSON_AddStringToObject(json, "title", snapshot.metadata.title);
+  cJSON_AddStringToObject(json, "artist", snapshot.metadata.artist);
+  cJSON_AddStringToObject(json, "album", snapshot.metadata.album);
+  cJSON_AddStringToObject(json, "genre", snapshot.metadata.genre);
+  cJSON_AddNumberToObject(json, "position_secs", position);
+  cJSON_AddNumberToObject(json, "duration_secs",
+                          snapshot.metadata.duration_secs);
+  cJSON *format = cJSON_AddObjectToObject(json, "format");
+  cJSON_AddStringToObject(format, "codec", health.format.codec);
+  cJSON_AddNumberToObject(format, "sample_rate", health.format.sample_rate);
+  cJSON_AddNumberToObject(format, "bits_per_sample",
+                          health.format.bits_per_sample);
+  cJSON_AddNumberToObject(format, "channels", health.format.channels);
+  cJSON_AddNumberToObject(format, "stream_type", health.stream_type);
+  cJSON *artwork = cJSON_AddObjectToObject(json, "artwork");
+  cJSON_AddBoolToObject(artwork, "available", snapshot.artwork_size > 0);
+  cJSON_AddNumberToObject(artwork, "bytes", snapshot.artwork_size);
+  cJSON_AddNumberToObject(artwork, "revision", snapshot.artwork_revision);
+  cJSON_AddStringToObject(artwork, "mime", snapshot.artwork_mime);
+  if (snapshot.artwork_size > 0) {
+    char url[64];
+    snprintf(url, sizeof(url), "/api/now-playing/artwork?v=%" PRIu32,
+             snapshot.artwork_revision);
+    cJSON_AddStringToObject(artwork, "url", url);
+  }
+  return send_json(req, json);
+}
+
+static esp_err_t now_playing_artwork_handler(httpd_req_t *req) {
+  uint8_t *data = NULL;
+  size_t size = 0;
+  char mime[NOW_PLAYING_MIME_MAX] = {0};
+  uint32_t revision = 0;
+  esp_err_t err =
+      now_playing_copy_artwork(&data, &size, mime, sizeof(mime), &revision);
+  if (err == ESP_ERR_NOT_FOUND) {
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No artwork");
+    return ESP_OK;
+  }
+  if (err != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_OK;
+  }
+  char etag[24];
+  snprintf(etag, sizeof(etag), "\"art-%" PRIu32 "\"", revision);
+  char request_etag[24] = {0};
+  if (httpd_req_get_hdr_value_str(req, "If-None-Match", request_etag,
+                                  sizeof(request_etag)) == ESP_OK &&
+      strcmp(request_etag, etag) == 0) {
+    free(data);
+    httpd_resp_set_status(req, "304 Not Modified");
+    return httpd_resp_send(req, NULL, 0);
+  }
+  httpd_resp_set_type(req, mime[0] ? mime : "application/octet-stream");
+  httpd_resp_set_hdr(req, "Cache-Control",
+                     "public, max-age=31536000, immutable");
+  httpd_resp_set_hdr(req, "ETag", etag);
+  err = httpd_resp_send(req, (const char *)data, (ssize_t)size);
+  free(data);
+  return err;
 }
 
 #ifdef CONFIG_MQTT_HA_ENABLED
@@ -869,9 +1026,18 @@ esp_err_t dsp_api_register(httpd_handle_t server) {
       {.uri = "/api/audio/test-tone",
        .method = HTTP_POST,
        .handler = test_tone_handler},
+      {.uri = "/api/audio/sync-test",
+       .method = HTTP_POST,
+       .handler = sync_test_handler},
       {.uri = "/api/audio/health",
        .method = HTTP_GET,
        .handler = audio_health_handler},
+      {.uri = "/api/now-playing",
+       .method = HTTP_GET,
+       .handler = now_playing_handler},
+      {.uri = "/api/now-playing/artwork",
+       .method = HTTP_GET,
+       .handler = now_playing_artwork_handler},
       {.uri = "/api/security/status",
        .method = HTTP_GET,
        .handler = security_status_handler},

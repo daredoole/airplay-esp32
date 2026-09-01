@@ -43,3 +43,11 @@ __attribute__((weak)) bool board_battery_read(int *percent, bool *charging) {
   (void)charging;
   return false;
 }
+
+__attribute__((weak)) void board_audio_set_muted(bool muted) {
+  (void)muted;
+}
+
+__attribute__((weak)) bool board_audio_mute_supported(void) {
+  return false;
+}

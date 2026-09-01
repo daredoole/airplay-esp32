@@ -14,13 +14,12 @@
 static const char TAG[] = "ESP32S3-Generic";
 
 static bool s_board_initialized = false;
+#if defined(CONFIG_MUTE_GPIO) && CONFIG_MUTE_GPIO >= 0
+static bool s_audio_muted = true;
+#endif
 
-#ifdef CONFIG_MUTE_GPIO
+#if defined(CONFIG_MUTE_GPIO) && CONFIG_MUTE_GPIO >= 0
 static esp_err_t init_mute_gpio(void) {
-  if (CONFIG_MUTE_GPIO < 0) {
-    return ESP_OK;
-  }
-
   gpio_config_t io_conf = {
       .pin_bit_mask = (1ULL << CONFIG_MUTE_GPIO),
       .mode = GPIO_MODE_OUTPUT,
@@ -34,15 +33,38 @@ static esp_err_t init_mute_gpio(void) {
     return err;
   }
 
-  // Initialize to unmuted state — set opposite of active level
-  gpio_set_level(CONFIG_MUTE_GPIO, !CONFIG_MUTE_GPIO_LEVEL);
+  // Fail quiet. The audio backend releases mute only after I2S clocks are
+  // stable and a faded-in audio buffer is queued.
+  gpio_set_level(CONFIG_MUTE_GPIO, CONFIG_MUTE_GPIO_LEVEL);
+  s_audio_muted = true;
 
   ESP_LOGI(TAG, "Mute GPIO %d initialized (active %s, init %s)",
            CONFIG_MUTE_GPIO, CONFIG_MUTE_GPIO_LEVEL ? "high" : "low",
-           CONFIG_MUTE_GPIO_LEVEL ? "low" : "high");
+           CONFIG_MUTE_GPIO_LEVEL ? "high" : "low");
   return ESP_OK;
 }
 #endif
+
+void board_audio_set_muted(bool muted) {
+#if defined(CONFIG_MUTE_GPIO) && CONFIG_MUTE_GPIO >= 0
+  if (s_audio_muted != muted) {
+    gpio_set_level(CONFIG_MUTE_GPIO,
+                   muted ? CONFIG_MUTE_GPIO_LEVEL : !CONFIG_MUTE_GPIO_LEVEL);
+    s_audio_muted = muted;
+    ESP_LOGI(TAG, "Audio output %s", muted ? "muted" : "unmuted");
+  }
+#else
+  (void)muted;
+#endif
+}
+
+bool board_audio_mute_supported(void) {
+#if defined(CONFIG_MUTE_GPIO) && CONFIG_MUTE_GPIO >= 0
+  return true;
+#else
+  return false;
+#endif
+}
 
 const char *iot_board_get_info(void) {
   return BOARD_NAME;
@@ -63,7 +85,7 @@ esp_err_t iot_board_init(void) {
     return ESP_OK;
   }
 
-#ifdef CONFIG_MUTE_GPIO
+#if defined(CONFIG_MUTE_GPIO) && CONFIG_MUTE_GPIO >= 0
   esp_err_t err = init_mute_gpio();
   if (err != ESP_OK) {
     return err;
@@ -76,6 +98,7 @@ esp_err_t iot_board_init(void) {
 }
 
 esp_err_t iot_board_deinit(void) {
+  board_audio_set_muted(true);
   s_board_initialized = false;
   return ESP_OK;
 }

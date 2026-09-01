@@ -84,3 +84,16 @@ void board_power_off(void);
  *         otherwise (the default for boards without a battery monitor).
  */
 bool board_battery_read(int *percent, bool *charging);
+
+/**
+ * @brief Assert or release the external DAC/amplifier mute line.
+ *
+ * Boards without a configured mute GPIO provide a harmless no-op. Generic
+ * PCM5102A boards use this for XSMT; amplifier boards may map it to their
+ * shutdown/enable input. The audio backend deliberately keeps this asserted
+ * while clocks are stopped or being reconfigured.
+ */
+void board_audio_set_muted(bool muted);
+
+/** @return true when the board has a controllable audio mute line. */
+bool board_audio_mute_supported(void);

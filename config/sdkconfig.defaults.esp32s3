@@ -43,6 +43,10 @@ CONFIG_I2S_GND_IO=14
 # or Audio Calibration MCP.
 CONFIG_AUDIO_CALIBRATION_DSP=y
 
+# Metadata artwork is bounded to 192 KiB and allocated only from the N16R8's
+# PSRAM, so it cannot consume the internal DMA/audio heap.
+CONFIG_ENABLE_AIRPLAY_ARTWORK=y
+
 # ST7789 TFT display support is not enabled by default.
 # The display is optional hardware — enabling it configures specific SPI
 # GPIO pins which may conflict with other peripherals on your board.

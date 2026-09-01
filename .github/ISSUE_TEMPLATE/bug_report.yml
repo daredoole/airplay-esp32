@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible firmware, playback, WebUI, or integration problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please remove passwords, API tokens, and MQTT credentials from logs.
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: ESP32 board, flash/PSRAM size, DAC or amplifier, and wiring.
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Commit SHA, release tag, or build date.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include exact steps, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials and private network details.
+          required: true
+        - label: I searched existing issues for this problem.
+          required: true

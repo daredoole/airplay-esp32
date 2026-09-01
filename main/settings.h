@@ -286,3 +286,7 @@ esp_err_t settings_set_api_token(const char *token);
 /** Opaque MQTT configuration blob owned and versioned by mqtt_ha.c. */
 esp_err_t settings_get_mqtt_config(void *data, size_t *len);
 esp_err_t settings_set_mqtt_config(const void *data, size_t len);
+
+/** Persisted pop-suppression fade used at AirPlay track transitions. */
+esp_err_t settings_get_output_fade_ms(uint8_t *fade_ms);
+esp_err_t settings_set_output_fade_ms(uint8_t fade_ms);

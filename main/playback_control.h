@@ -75,6 +75,14 @@ bool playback_control_is_muted(void);
 
 /**
  * Get the current volume as a percentage (0..100), derived from the saved
- * AirPlay volume in NVS. Returns 0 when muted.
+ * AirPlay volume in NVS. Mute is reported separately so callers retain the
+ * level that will be restored on unmute.
  */
 int playback_control_get_volume_percent(void);
+
+/** Set local AirPlay volume from a Home Assistant style 0..100 value. */
+void playback_control_set_volume_percent(int percent);
+
+/** Set mute explicitly without accidentally toggling an already-matching state.
+ */
+void playback_control_set_muted(bool muted);

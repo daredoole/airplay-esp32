@@ -35,6 +35,7 @@
 
 #include "rtsp_events.h"
 #include "dacp_client.h"
+#include "now_playing.h"
 
 static const char *TAG = "rtsp_handlers";
 
@@ -467,6 +468,12 @@ int rtsp_dispatch(int socket, rtsp_conn_t *conn, const uint8_t *raw_request,
                req.method);
     }
   }
+  if (conn->user_agent[0] == '\0') {
+    const char *val = parse_raw_header(raw_request, raw_len, "User-Agent:");
+    if (val)
+      strlcpy(conn->user_agent, val, sizeof(conn->user_agent));
+  }
+  now_playing_set_sender(conn->user_agent, conn->protocol_version);
   // Update DACP client session when both identifiers are available
   if (conn->dacp_id[0] != '\0' && conn->active_remote[0] != '\0') {
     dacp_set_session(conn->dacp_id, conn->active_remote, conn->client_ip);
@@ -1614,6 +1621,9 @@ static void handle_set_parameter(int socket, rtsp_conn_t *conn,
     ESP_LOGI(TAG, "Received artwork: %s (%zu bytes)", req->content_type,
              body_len);
     event_data.metadata.has_artwork = true;
+    event_data.metadata.artwork_data = body;
+    event_data.metadata.artwork_size = body_len;
+    event_data.metadata.artwork_mime = req->content_type;
     has_metadata = true;
 #else
     // Artwork reception disabled — ignore it.  The md txt record already asks

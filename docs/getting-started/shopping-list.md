@@ -17,13 +17,13 @@ under $10 total.
 
 ## Check the DAC board
 
-Verify the solder bridges on your PCM5102A are in the same position as the picture below.
-Boards ship with varying default configurations, and the wrong bridge position is a common
-cause of silence.
+Set the solder bridges to **H1L, H2L, H3H, H4L**. Join each center pad to only
+the indicated side; never bridge all three. Boards ship in varying configurations,
+and H3L holds `XSMT` muted, which is a common cause of silence.
 
 <figure markdown>
-  ![PCM5102A DAC board showing the expected solder bridge positions](../assets/PCM5102A.png){ width="500" }
-  <figcaption>PCM5102A with the expected solder bridge configuration</figcaption>
+  ![PCM5102A solder jumper map showing H1L, H2L, H3H and H4L](../assets/pcm5102a-jumper-map.svg){ width="600" }
+  <figcaption>Yellow shows the only two pads that should be joined</figcaption>
 </figure>
 
 ## Optional extras

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850" viewBox="0 0 1200 850">
+  <rect width="1200" height="850" fill="#17141f"/>
+  <rect x="120" y="110" width="960" height="610" rx="34" fill="#74257f" stroke="#d69cdd" stroke-width="8"/>
+  <text x="600" y="64" fill="white" font-family="sans-serif" font-size="38" text-anchor="middle" font-weight="700">PCM5102A — rear view, matching your photo</text>
+  <text x="1030" y="390" fill="white" font-family="sans-serif" font-size="30" text-anchor="middle" transform="rotate(90 1030 390)">PIN HEADER →</text>
+  <path d="M120 590 h120 v130 h-120" fill="#101015"/>
+  <text x="180" y="770" fill="white" font-family="sans-serif" font-size="28" text-anchor="middle">jack</text>
+
+  <g font-family="sans-serif" text-anchor="middle">
+    <text x="405" y="190" fill="white" font-size="34" font-weight="700">H2L</text>
+    <text x="405" y="228" fill="white" font-size="27">CENTER → RIGHT</text>
+    <text x="795" y="190" fill="white" font-size="34" font-weight="700">H1L</text>
+    <text x="795" y="228" fill="white" font-size="27">CENTER → RIGHT</text>
+    <text x="405" y="490" fill="white" font-size="34" font-weight="700">H4L</text>
+    <text x="405" y="528" fill="white" font-size="27">CENTER → RIGHT</text>
+    <text x="795" y="490" fill="white" font-size="34" font-weight="700">H3L</text>
+    <text x="795" y="528" fill="white" font-size="27">CENTER → LEFT</text>
+
+    <g font-size="30" font-weight="700">
+      <text x="315" y="275" fill="#bbb">H</text><text x="405" y="275" fill="white">2</text><text x="495" y="275" fill="#ffdf70">L</text>
+      <text x="705" y="275" fill="#bbb">H</text><text x="795" y="275" fill="white">1</text><text x="885" y="275" fill="#ffdf70">L</text>
+      <text x="315" y="575" fill="#bbb">H</text><text x="405" y="575" fill="white">4</text><text x="495" y="575" fill="#ffdf70">L</text>
+      <text x="705" y="575" fill="#ffdf70">H</text><text x="795" y="575" fill="white">3</text><text x="885" y="575" fill="#bbb">L</text>
+    </g>
+
+    <g stroke="#ded7df" stroke-width="5">
+      <rect x="280" y="300" width="70" height="120" rx="8" fill="#777"/><rect x="370" y="300" width="70" height="120" rx="8" fill="#ffbf2f"/><rect x="460" y="300" width="70" height="120" rx="8" fill="#ffbf2f"/>
+      <rect x="670" y="300" width="70" height="120" rx="8" fill="#777"/><rect x="760" y="300" width="70" height="120" rx="8" fill="#ffbf2f"/><rect x="850" y="300" width="70" height="120" rx="8" fill="#ffbf2f"/>
+      <rect x="280" y="600" width="70" height="120" rx="8" fill="#777"/><rect x="370" y="600" width="70" height="120" rx="8" fill="#ffbf2f"/><rect x="460" y="600" width="70" height="120" rx="8" fill="#ffbf2f"/>
+      <rect x="670" y="600" width="70" height="120" rx="8" fill="#ffbf2f"/><rect x="760" y="600" width="70" height="120" rx="8" fill="#ffbf2f"/><rect x="850" y="600" width="70" height="120" rx="8" fill="#777"/>
+    </g>
+    <g stroke="#fff0a8" stroke-width="18" stroke-linecap="round">
+      <line x1="405" y1="360" x2="495" y2="360"/><line x1="795" y1="360" x2="885" y2="360"/>
+      <line x1="405" y1="660" x2="495" y2="660"/><line x1="705" y1="660" x2="795" y2="660"/>
+    </g>
+  </g>
+  <text x="600" y="814" fill="#ffdf70" font-family="sans-serif" font-size="32" text-anchor="middle" font-weight="700">Yellow = one solder blob joining TWO pads only. Never bridge all three.</text>
+</svg>
